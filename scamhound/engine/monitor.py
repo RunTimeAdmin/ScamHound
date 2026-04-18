@@ -56,6 +56,10 @@ def _notify_new_score(score_data: dict):
     """
     if _new_score_callback:
         try:
+            logger.debug(
+                f"[MONITOR] Broadcasting new score for "
+                f"{score_data.get('token_name', 'unknown')}"
+            )
             _new_score_callback(score_data)
         except Exception as e:
             logger.warning(
@@ -357,6 +361,13 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         
         # Get creator wallet
         creator_wallet = token_data.get("creator", {}).get("wallet")
+        
+        # Check if creator wallet is on watchlist
+        if creator_wallet and database.is_watched_wallet(creator_wallet):
+            database.update_watchlist_seen(creator_wallet)
+            logger.info(
+                f"[SCAMHOUND] Watched wallet detected: {creator_wallet[:8]}..."
+            )
         
         if creator_wallet:
             # Run creator analysis and clustering check in parallel
@@ -745,6 +756,13 @@ def run_cycle() -> None:
             
             # Get creator wallet
             creator_wallet = token_data.get("creator", {}).get("wallet")
+            
+            # Check if creator wallet is on watchlist
+            if creator_wallet and database.is_watched_wallet(creator_wallet):
+                database.update_watchlist_seen(creator_wallet)
+                logger.info(
+                    f"[SCAMHOUND] Watched wallet detected: {creator_wallet[:8]}..."
+                )
             
             if creator_wallet:
                 try:

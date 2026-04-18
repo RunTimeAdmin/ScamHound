@@ -35,6 +35,10 @@ _rate_limit_store: Dict[str, List[float]] = {}
 _MAX_SCANS_PER_MINUTE = 5
 _RATE_LIMIT_WINDOW = 60  # seconds
 
+# Rate limit store cleanup tracking
+_rate_limit_last_cleanup: float = 0
+_RATE_LIMIT_CLEANUP_INTERVAL = 300  # 5 minutes in seconds
+
 # Auto-scan scheduler state
 _autoscan_scheduler: Optional[BackgroundScheduler] = None
 _autoscan_enabled: bool = False
@@ -46,12 +50,40 @@ _websocket_connections: set = set()
 _websocket_lock = threading.Lock()
 
 
+def _cleanup_rate_limit_store():
+    """
+    Remove entries older than the rate limit window from all IPs.
+    Called periodically to prevent unbounded growth.
+    """
+    global _rate_limit_last_cleanup
+    now = time.time()
+    
+    # Remove old timestamps for each IP
+    for ip in list(_rate_limit_store.keys()):
+        _rate_limit_store[ip] = [
+            ts for ts in _rate_limit_store[ip]
+            if now - ts < _RATE_LIMIT_WINDOW
+        ]
+        # Remove IP entry if empty
+        if not _rate_limit_store[ip]:
+            del _rate_limit_store[ip]
+    
+    _rate_limit_last_cleanup = now
+    remaining = len(_rate_limit_store)
+    logger.debug(f"[RATE_LIMIT] Cleaned up store, remaining IPs: {remaining}")
+
+
 def _check_rate_limit(ip: str) -> tuple[bool, int, int]:
     """
     Check if IP has exceeded rate limit.
     Returns: (allowed, remaining, retry_after)
     """
+    global _rate_limit_last_cleanup
     now = time.time()
+    
+    # Periodic cleanup of old entries (every 5 minutes)
+    if now - _rate_limit_last_cleanup >= _RATE_LIMIT_CLEANUP_INTERVAL:
+        _cleanup_rate_limit_store()
     
     # Clean up old entries for this IP
     if ip in _rate_limit_store:
@@ -846,7 +878,7 @@ async def startup_event():
                 )
             except RuntimeError:
                 # No running loop, skip broadcast
-                pass
+                logger.debug("[WEBSOCKET] No event loop, skipping broadcast")
         
         monitor.set_new_score_callback(broadcast_callback)
         logger.info("[SCAMHOUND] WebSocket callback registered with monitor")
