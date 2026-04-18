@@ -43,6 +43,23 @@
         </div>
     </header>
 
+    <!-- Prominent Auto-Scan Banner -->
+    <div class="autoscan-banner" id="autoscan-banner">
+        <div class="autoscan-banner-content">
+            <div class="autoscan-label-section">
+                <span class="autoscan-icon">🔄</span>
+                <span class="autoscan-title">AUTO-SCAN</span>
+                <span id="autoscan-status-badge" class="autoscan-status-badge">INACTIVE</span>
+            </div>
+            <div class="autoscan-toggle-section">
+                <span id="autoscan-status-text" class="autoscan-status-text">Auto-scan is currently disabled</span>
+                <button id="autoscan-toggle" class="autoscan-toggle-large" onclick="toggleAutoscan()" aria-label="Toggle Auto-Scan">
+                    <span class="autoscan-slider-large"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <main>
         <!-- Manual Scan Section -->
         <div class="scan-section">
@@ -58,13 +75,6 @@
                             <a href="/api/export/pdf" class="export-btn export-pdf" title="Export PDF">
                                 <span>📥</span> Export PDF
                             </a>
-                        </div>
-                        <!-- Auto-Scan Toggle -->
-                        <div class="autoscan-control">
-                            <span id="autoscan-status-text" class="autoscan-status">Auto-Scan: OFF</span>
-                            <button id="autoscan-toggle" class="autoscan-toggle" onclick="toggleAutoscan()">
-                                <span class="autoscan-slider"></span>
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -276,15 +286,21 @@
         function updateAutoscanUI(enabled, interval) {
             const toggleBtn = document.getElementById('autoscan-toggle');
             const statusText = document.getElementById('autoscan-status-text');
+            const statusBadge = document.getElementById('autoscan-status-badge');
+            const banner = document.getElementById('autoscan-banner');
 
             if (enabled) {
                 toggleBtn.classList.add('enabled');
-                statusText.textContent = `Auto-Scan: ON (${interval}s interval)`;
-                statusText.classList.add('enabled');
+                statusText.textContent = `Auto-scan active • Checking every ${interval}s`;
+                statusBadge.textContent = 'ACTIVE';
+                statusBadge.classList.add('active');
+                banner.classList.add('active');
             } else {
                 toggleBtn.classList.remove('enabled');
-                statusText.textContent = 'Auto-Scan: OFF';
-                statusText.classList.remove('enabled');
+                statusText.textContent = 'Auto-scan is currently disabled';
+                statusBadge.textContent = 'INACTIVE';
+                statusBadge.classList.remove('active');
+                banner.classList.remove('active');
             }
         }
 
