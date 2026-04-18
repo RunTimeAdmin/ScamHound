@@ -7,7 +7,7 @@ import os
 import time
 import logging
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -31,6 +31,40 @@ MIN_TOKEN_AGE_MINUTES = int(os.getenv("MIN_TOKEN_AGE_MINUTES", "0"))  # Skip tok
 
 # Track processed tokens to avoid duplicates in memory
 processed_tokens = set()
+
+# Callback for broadcasting new scores via WebSocket
+_new_score_callback: Optional[Callable[[dict], None]] = None
+
+
+def set_new_score_callback(callback: Callable[[dict], None]):
+    """
+    Set a callback function to be called when a new score is saved.
+    Used by dashboard to broadcast via WebSocket.
+    
+    Args:
+        callback: Function that accepts a score_data dict
+    """
+    global _new_score_callback
+    _new_score_callback = callback
+    logger.info("[MONITOR] New score callback registered")
+
+
+def _notify_new_score(score_data: dict):
+    """
+    Notify the registered callback of a new score.
+    Thread-safe wrapper for the callback.
+    """
+    if _new_score_callback:
+        try:
+            _new_score_callback(score_data)
+        except Exception as e:
+            logger.warning(
+                f"[MONITOR] Failed to notify new score callback: {e}"
+            )
+
+
+# Global scheduler instance
+_scheduler = None
 
 
 def _calculate_token_age_minutes(created_at: Any) -> Optional[int]:
@@ -361,6 +395,9 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         
         # Mark as processed
         processed_tokens.add(token_mint)
+        
+        # Notify WebSocket clients
+        _notify_new_score(score_result)
         
         # Log result
         logger.info(
@@ -758,6 +795,9 @@ def run_cycle() -> None:
                 processed_tokens.add(token_mint)
                 new_tokens_processed += 1
                 
+                # Notify WebSocket clients
+                _notify_new_score(score_result)
+                
                 # Log result
                 logger.info(
                     f"[SCAMHOUND] {score_result.get('symbol', '???')} | "
@@ -789,7 +829,9 @@ def run_cycle() -> None:
 
 def start_scheduler() -> None:
     """Start the monitoring scheduler."""
-    scheduler = BackgroundScheduler()
+    global _scheduler
+    _scheduler = BackgroundScheduler()
+    scheduler = _scheduler
     
     scheduler.add_job(
         run_cycle,
@@ -809,6 +851,10 @@ def start_scheduler() -> None:
 
 def stop_scheduler() -> None:
     """Stop the monitoring scheduler."""
-    scheduler = BackgroundScheduler()
-    scheduler.shutdown()
-    logger.info("[SCAMHOUND] Monitor scheduler stopped")
+    global _scheduler
+    if _scheduler:
+        _scheduler.shutdown()
+        _scheduler = None
+        logger.info("[SCAMHOUND] Monitor scheduler stopped")
+    else:
+        logger.warning("[SCAMHOUND] No scheduler running to stop")

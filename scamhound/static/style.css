@@ -1824,3 +1824,287 @@ textarea::placeholder {
     background: rgba(88, 166, 255, 0.3);
     color: var(--text-primary);
 }
+
+/* --------------------------------------------------------------------------
+   20. WebSocket Connection Indicator
+   -------------------------------------------------------------------------- */
+.ws-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: var(--radius-full);
+    transition: all var(--transition-normal);
+    box-shadow: 0 0 8px currentColor;
+}
+
+.ws-connected {
+    background-color: var(--status-success);
+    color: var(--status-success);
+    animation: wsPulse 2s ease-in-out infinite;
+}
+
+.ws-disconnected {
+    background-color: var(--status-error);
+    color: var(--status-error);
+}
+
+@keyframes wsPulse {
+    0%, 100% {
+        opacity: 1;
+        box-shadow: 0 0 8px var(--status-success);
+    }
+    50% {
+        opacity: 0.6;
+        box-shadow: 0 0 16px var(--status-success);
+    }
+}
+
+/* --------------------------------------------------------------------------
+   21. New Score Row Animation
+   -------------------------------------------------------------------------- */
+.new-score-row {
+    animation: slideInFromTop 0.5s ease-out, highlightGlow 2s ease-out;
+}
+
+@keyframes slideInFromTop {
+    0% {
+        transform: translateY(-20px);
+        opacity: 0;
+    }
+    100% {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+@keyframes highlightGlow {
+    0% {
+        background-color: rgba(88, 166, 255, 0.3);
+    }
+    50% {
+        background-color: rgba(88, 166, 255, 0.15);
+    }
+    100% {
+        background-color: transparent;
+    }
+}
+
+/* Risk-specific glow effects for new rows */
+.new-score-row.risk-low {
+    animation: slideInFromTop 0.5s ease-out, highlightGlowLow 2s ease-out;
+}
+
+.new-score-row.risk-moderate {
+    animation: slideInFromTop 0.5s ease-out, highlightGlowModerate 2s ease-out;
+}
+
+.new-score-row.risk-high {
+    animation: slideInFromTop 0.5s ease-out, highlightGlowHigh 2s ease-out;
+}
+
+.new-score-row.risk-critical {
+    animation: slideInFromTop 0.5s ease-out, highlightGlowCritical 2s ease-out;
+}
+
+@keyframes highlightGlowLow {
+    0% { background-color: rgba(63, 185, 80, 0.3); }
+    50% { background-color: rgba(63, 185, 80, 0.15); }
+    100% { background-color: transparent; }
+}
+
+@keyframes highlightGlowModerate {
+    0% { background-color: rgba(210, 153, 34, 0.3); }
+    50% { background-color: rgba(210, 153, 34, 0.15); }
+    100% { background-color: transparent; }
+}
+
+@keyframes highlightGlowHigh {
+    0% { background-color: rgba(219, 109, 40, 0.3); }
+    50% { background-color: rgba(219, 109, 40, 0.15); }
+    100% { background-color: transparent; }
+}
+
+@keyframes highlightGlowCritical {
+    0% { background-color: rgba(248, 81, 73, 0.3); }
+    50% { background-color: rgba(248, 81, 73, 0.15); }
+    100% { background-color: transparent; }
+}
+
+/* --------------------------------------------------------------------------
+   22. Toast Notification Enhancements
+   -------------------------------------------------------------------------- */
+.toast.new-score-toast {
+    border-left-width: 4px;
+}
+
+.toast.new-score-toast.critical,
+.toast.new-score-toast.high {
+    background: var(--risk-critical-bg);
+    border-left-color: var(--risk-critical);
+}
+
+.toast.new-score-toast.moderate {
+    background: var(--risk-moderate-bg);
+    border-left-color: var(--risk-moderate);
+}
+
+.toast.new-score-toast.low {
+    background: var(--risk-low-bg);
+    border-left-color: var(--risk-low);
+}
+
+/* --------------------------------------------------------------------------
+   23. Watchlist Styles
+   -------------------------------------------------------------------------- */
+
+/* Watchlist Form */
+.watchlist-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.watchlist-form .form-row {
+    display: flex;
+    gap: var(--space-sm);
+}
+
+.watchlist-form .form-row:last-child {
+    margin-top: var(--space-sm);
+}
+
+.watchlist-form textarea.scan-input {
+    resize: vertical;
+    min-height: 60px;
+    font-family: var(--font-primary);
+}
+
+/* Watchlist Header */
+.watchlist-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-md) var(--space-lg);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.watchlist-header h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.watchlist-count {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+/* Watchlist Table */
+.watchlist-table th,
+.watchlist-table td {
+    padding: var(--space-md);
+}
+
+.watchlist-table th:last-child,
+.watchlist-table td:last-child {
+    text-align: center;
+}
+
+/* Wallet Address Link */
+.wallet-address {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--accent-primary);
+    text-decoration: none;
+    background: var(--bg-primary);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-secondary);
+    transition: all var(--transition-fast);
+}
+
+.wallet-address:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-primary);
+    text-decoration: none;
+}
+
+/* Wallet Label */
+.wallet-label {
+    display: inline-block;
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.label-muted {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Wallet Notes */
+.wallet-notes {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notes-cell {
+    max-width: 250px;
+}
+
+/* Alert Count */
+.alert-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--risk-high-bg);
+    color: var(--risk-high);
+    border-radius: var(--radius-full);
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.alert-count:empty,
+.alert-count[data-count="0"] {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+}
+
+/* Small Button Variant */
+.btn-sm {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.85rem;
+}
+
+/* Responsive Watchlist */
+@media (max-width: 768px) {
+    .watchlist-form .form-row {
+        flex-direction: column;
+    }
+    
+    .watchlist-header {
+        flex-direction: column;
+        gap: var(--space-sm);
+        text-align: center;
+    }
+    
+    .watchlist-table {
+        min-width: 900px;
+    }
+    
+    .wallet-notes {
+        max-width: 150px;
+    }
+}

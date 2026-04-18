@@ -87,6 +87,50 @@ def load_config() -> None:
         logger.info("[CONFIG] No config.json found, using env/defaults")
 
 
+def _validate_api_key(key: str, value: str) -> tuple[bool, str]:
+    """
+    Validate API key format.
+    
+    Args:
+        key: The configuration key name
+        value: The API key value to validate
+        
+    Returns:
+        tuple[bool, str]: (is_valid, error_message)
+    """
+    if not value or value.strip() == "":
+        return True, ""  # Empty values are skipped, not invalid
+    
+    if key == "ANTHROPIC_API_KEY":
+        if not value.startswith("sk-ant-") or len(value) < 20:
+            return False, (
+                "ANTHROPIC_API_KEY must start with 'sk-ant-' "
+                "and be at least 20 characters"
+            )
+    elif key == "HELIUS_API_KEY":
+        if len(value) < 10:
+            return False, (
+                "HELIUS_API_KEY must be at least 10 characters (UUID format)"
+            )
+    elif key == "BAGS_API_KEY":
+        if not value.startswith("bags_") or len(value) < 10:
+            return False, (
+                "BAGS_API_KEY must start with 'bags_' "
+                "and be at least 10 characters"
+            )
+    elif key == "BIRDEYE_API_KEY":
+        if len(value) < 10:
+            return False, "BIRDEYE_API_KEY must be at least 10 characters"
+    elif key == "BUBBLEMAPS_API_KEY":
+        if len(value) < 10:
+            return False, "BUBBLEMAPS_API_KEY must be at least 10 characters"
+    elif key == "SCAMHOUND_ADMIN_TOKEN":
+        # No format requirement - any non-empty string is valid
+        pass
+    
+    return True, ""
+
+
 def save_config(keys: Dict[str, Any]) -> bool:
     """
     Save API keys and settings to config.json and update os.environ.
@@ -96,6 +140,9 @@ def save_config(keys: Dict[str, Any]) -> bool:
         
     Returns:
         bool: True if saved successfully, False otherwise
+        
+    Raises:
+        ValueError: If any key fails format validation
     """
     try:
         # Load existing config if available
@@ -107,7 +154,10 @@ def save_config(keys: Dict[str, Any]) -> bool:
             except (json.JSONDecodeError, Exception):
                 existing_config = {}
         
-        # Update with new values (skip empty values and masked placeholders)
+        # Validate and collect errors
+        validation_errors = []
+        valid_keys = {}
+        
         for key, value in keys.items():
             if key not in CONFIG_KEYS:
                 continue
@@ -119,7 +169,19 @@ def save_config(keys: Dict[str, Any]) -> bool:
                 # Value is masked, don't overwrite
                 continue
             
-            # Update both config file and environment
+            # Validate key format
+            is_valid, error_msg = _validate_api_key(key, value)
+            if not is_valid:
+                validation_errors.append(error_msg)
+            else:
+                valid_keys[key] = value
+        
+        # Raise error if any validation failed
+        if validation_errors:
+            raise ValueError("; ".join(validation_errors))
+        
+        # Update config with valid keys
+        for key, value in valid_keys.items():
             existing_config[key] = value
             os.environ[key] = str(value)
         
@@ -130,6 +192,8 @@ def save_config(keys: Dict[str, Any]) -> bool:
         logger.info("[CONFIG] Configuration saved successfully")
         return True
         
+    except ValueError:
+        raise
     except Exception as e:
         logger.error(f"[CONFIG] Failed to save configuration: {e}")
         return False

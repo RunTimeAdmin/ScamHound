@@ -13,7 +13,9 @@ from datetime import datetime
 from typing import Dict, List, Optional
 # Type imports removed - not needed
 
-from fastapi import FastAPI, Request, Header, Query
+from fastapi import (
+    FastAPI, Request, Header, Query, WebSocket, WebSocketDisconnect
+)
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -38,6 +40,10 @@ _autoscan_scheduler: Optional[BackgroundScheduler] = None
 _autoscan_enabled: bool = False
 _autoscan_interval: int = 60  # seconds
 _autoscan_lock = threading.Lock()
+
+# WebSocket active connections
+_websocket_connections: set = set()
+_websocket_lock = threading.Lock()
 
 
 def _check_rate_limit(ip: str) -> tuple[bool, int, int]:
@@ -131,6 +137,23 @@ async def index(request: Request):
     )
 
 
+@app.get("/watchlist", response_class=HTMLResponse)
+async def watchlist_page(request: Request):
+    """
+    Watchlist page.
+    Shows all watched wallets with management UI.
+    """
+    watchlist = database.get_watchlist()
+    
+    return templates.TemplateResponse(
+        "watchlist.html",
+        {
+            "request": request,
+            "watchlist": watchlist
+        }
+    )
+
+
 @app.get("/token/{token_mint}", response_class=HTMLResponse)
 async def token_detail(request: Request, token_mint: str):
     """
@@ -210,6 +233,123 @@ async def api_stats():
     """
     stats = database.get_stats()
     return JSONResponse(content=stats)
+
+
+@app.get("/api/watchlist")
+async def api_watchlist():
+    """
+    API endpoint for watchlist.
+    Returns all watchlist entries as JSON.
+    """
+    watchlist = database.get_watchlist()
+    return JSONResponse(content=watchlist)
+
+
+@app.post("/api/watchlist")
+async def api_add_to_watchlist(request: Request):
+    """
+    Add a wallet to the watchlist.
+    Accepts JSON: {"wallet_address": "...", "label": "...", "notes": "..."}
+    """
+    try:
+        data = await request.json()
+        
+        if not isinstance(data, dict):
+            return JSONResponse(
+                content={"success": False, "error": "Invalid request body"},
+                status_code=400
+            )
+        
+        wallet_address = data.get("wallet_address", "").strip()
+        label = data.get("label", "").strip()
+        notes = data.get("notes", "").strip()
+        
+        if not wallet_address:
+            return JSONResponse(
+                content={"success": False, "error": "Missing wallet_address"},
+                status_code=400
+            )
+        
+        # Basic validation for Solana wallet address
+        if len(wallet_address) < 32 or len(wallet_address) > 44:
+            return JSONResponse(
+                content={"success": False, "error": "Invalid wallet address format"},
+                status_code=400
+            )
+        
+        success = database.add_to_watchlist(wallet_address, label, notes)
+        
+        if success:
+            return JSONResponse(
+                content={"success": True, "message": "Wallet added to watchlist"}
+            )
+        else:
+            return JSONResponse(
+                content={"success": False, "error": "Wallet already on watchlist"},
+                status_code=409
+            )
+    
+    except Exception as e:
+        logger.error(f"[WATCHLIST] Error adding to watchlist: {e}")
+        return JSONResponse(
+            content={"success": False, "error": str(e)},
+            status_code=500
+        )
+
+
+@app.delete("/api/watchlist/{wallet_address}")
+async def api_remove_from_watchlist(wallet_address: str):
+    """
+    Remove a wallet from the watchlist.
+    """
+    try:
+        success = database.remove_from_watchlist(wallet_address)
+        
+        if success:
+            return JSONResponse(
+                content={"success": True, "message": "Wallet removed from watchlist"}
+            )
+        else:
+            return JSONResponse(
+                content={"success": False, "error": "Wallet not found on watchlist"},
+                status_code=404
+            )
+    
+    except Exception as e:
+        logger.error(f"[WATCHLIST] Error removing from watchlist: {e}")
+        return JSONResponse(
+            content={"success": False, "error": str(e)},
+            status_code=500
+        )
+
+
+@app.get("/api/creator/{wallet_address}")
+async def api_creator_reputation(wallet_address: str):
+    """
+    Get aggregated reputation data for a creator wallet.
+    Returns stats about all tokens launched by this creator.
+    """
+    try:
+        reputation = database.get_creator_reputation(wallet_address)
+        
+        if reputation is None:
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": "No tokens found for this creator",
+                    "wallet_address": wallet_address
+                },
+                status_code=404
+            )
+        
+        return JSONResponse(content={"success": True, "data": reputation})
+    
+    except Exception as e:
+        logger.error(f"[CREATOR] Error fetching creator reputation: {e}")
+        return JSONResponse(
+            content={"success": False, "error": str(e)},
+            status_code=500
+        )
 
 
 @app.post("/api/scan")
@@ -689,7 +829,93 @@ async def startup_event():
     """Initialize database and config on startup."""
     load_config()
     database.init_db()
+    
+    # Register WebSocket broadcast callback with monitor
+    # This allows monitor to broadcast new scores without circular imports
+    try:
+        from engine import monitor
+        import asyncio
+        
+        def broadcast_callback(score_data: dict):
+            """Callback to broadcast score via WebSocket from any thread."""
+            try:
+                # Use asyncio.run_coroutine_threadsafe if in different thread
+                loop = asyncio.get_running_loop()
+                asyncio.run_coroutine_threadsafe(
+                    broadcast_new_score(score_data), loop
+                )
+            except RuntimeError:
+                # No running loop, skip broadcast
+                pass
+        
+        monitor.set_new_score_callback(broadcast_callback)
+        logger.info("[SCAMHOUND] WebSocket callback registered with monitor")
+    except Exception as e:
+        logger.warning(f"[SCAMHOUND] Could not register monitor callback: {e}")
+    
     logger.info("[SCAMHOUND] Dashboard started")
+
+
+@app.websocket("/ws/scores")
+async def websocket_scores(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time score updates.
+    Broadcasts new token scores to all connected clients.
+    """
+    await websocket.accept()
+    
+    with _websocket_lock:
+        _websocket_connections.add(websocket)
+    
+    client_host = websocket.client.host if websocket.client else "unknown"
+    logger.info(f"[WEBSOCKET] Client connected: {client_host}")
+    
+    try:
+        while True:
+            # Keep connection alive, wait for any message (ping/pong)
+            data = await websocket.receive_text()
+            # Echo back to confirm connection is alive
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        logger.info(f"[WEBSOCKET] Client disconnected: {client_host}")
+    except Exception as e:
+        logger.warning(f"[WEBSOCKET] Connection error: {e}")
+    finally:
+        with _websocket_lock:
+            _websocket_connections.discard(websocket)
+
+
+async def broadcast_new_score(score_data: dict):
+    """
+    Broadcast a new score to all connected WebSocket clients.
+    
+    Args:
+        score_data: Dictionary containing token score information
+    """
+    if not _websocket_connections:
+        return
+    
+    # Prepare the message
+    message = {
+        "type": "new_score",
+        "data": score_data
+    }
+    
+    # Send to all connected clients
+    disconnected = set()
+    
+    for websocket in _websocket_connections:
+        try:
+            await websocket.send_json(message)
+        except Exception as e:
+            logger.warning(f"[WEBSOCKET] Failed to send to client: {e}")
+            disconnected.add(websocket)
+    
+    # Clean up disconnected clients
+    if disconnected:
+        with _websocket_lock:
+            _websocket_connections -= disconnected
 
 
 if __name__ == "__main__":

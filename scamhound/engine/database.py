@@ -19,7 +19,7 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create the scored_tokens table if it doesn't exist."""
+    """Create the scored_tokens and watchlist tables if they don't exist."""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -45,6 +45,18 @@ def init_db() -> None:
             tweet_sent BOOLEAN DEFAULT FALSE,
             scored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wallet_address TEXT NOT NULL UNIQUE,
+            label TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            added_at TEXT NOT NULL,
+            last_seen_at TEXT DEFAULT NULL,
+            alert_count INTEGER DEFAULT 0
         )
     """)
     
@@ -223,4 +235,149 @@ def get_stats() -> Dict[str, int]:
         "high_risk": high,
         "critical_alerts": critical,
         "last_updated": last
+    }
+
+
+# ============================================================================
+# Watchlist Functions
+# ============================================================================
+
+def add_to_watchlist(wallet_address: str, label: str = "", notes: str = "") -> bool:
+    """Add a wallet to the watchlist. Returns True if successful, False if already exists."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO watchlist (wallet_address, label, notes, added_at)
+            VALUES (?, ?, ?, ?)
+        """, (wallet_address, label, notes, datetime.now().isoformat()))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        # Wallet already exists
+        return False
+    finally:
+        conn.close()
+
+
+def remove_from_watchlist(wallet_address: str) -> bool:
+    """Remove a wallet from the watchlist. Returns True if deleted, False if not found."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM watchlist WHERE wallet_address = ?", (wallet_address,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return deleted
+
+
+def get_watchlist() -> List[Dict[str, Any]]:
+    """Get all watchlist entries ordered by added_at desc."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM watchlist
+        ORDER BY added_at DESC
+    """)
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+
+def is_watched_wallet(wallet_address: str) -> bool:
+    """Check if a wallet is on the watchlist."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT 1 FROM watchlist WHERE wallet_address = ?", (wallet_address,))
+    result = cursor.fetchone()
+    conn.close()
+    
+    return result is not None
+
+
+def update_watchlist_seen(wallet_address: str) -> bool:
+    """Update last_seen_at and increment alert_count for a watched wallet."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE watchlist
+        SET last_seen_at = ?, alert_count = alert_count + 1
+        WHERE wallet_address = ?
+    """, (datetime.now().isoformat(), wallet_address))
+    
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return updated
+
+
+# ============================================================================
+# Creator Reputation Functions
+# ============================================================================
+
+def get_creator_reputation(wallet_address: str) -> Optional[Dict[str, Any]]:
+    """
+    Get aggregated reputation data for a creator wallet.
+    
+    Returns:
+        Dictionary with:
+        - total_tokens_launched
+        - avg_risk_score
+        - high_risk_count (score >= 70)
+        - critical_count (score >= 85)
+        - tokens list (name, mint, score, risk_level, scored_at)
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            token_mint, name, symbol, risk_score, risk_level, scored_at
+        FROM scored_tokens
+        WHERE creator_wallet = ?
+        ORDER BY scored_at DESC
+    """, (wallet_address,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        return None
+    
+    tokens = []
+    total_score = 0
+    high_risk_count = 0
+    critical_count = 0
+    
+    for row in rows:
+        token = dict(row)
+        tokens.append(token)
+        
+        score = token.get("risk_score") or 0
+        total_score += score
+        
+        if score >= 85:
+            critical_count += 1
+        elif score >= 70:
+            high_risk_count += 1
+    
+    total_tokens = len(tokens)
+    avg_risk_score = round(total_score / total_tokens, 1) if total_tokens > 0 else 0
+    
+    return {
+        "wallet_address": wallet_address,
+        "total_tokens_launched": total_tokens,
+        "avg_risk_score": avg_risk_score,
+        "high_risk_count": high_risk_count,
+        "critical_count": critical_count,
+        "tokens": tokens
     }

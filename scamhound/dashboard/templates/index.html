@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="60">
     <title>ScamHound — Real-time Rug Pull Detection for Bags.fm</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48.png">
@@ -19,6 +18,7 @@
             </div>
             <nav class="nav-links">
                 <a href="/" class="active">Dashboard</a>
+                <a href="/watchlist">Watchlist</a>
                 <a href="/settings">Settings</a>
             </nav>
             <p class="tagline">Real-time rug pull detection for Bags.fm</p>
@@ -39,6 +39,12 @@
             <div class="stat">
                 <span class="stat-value" id="last-updated">{{ stats.last_updated or 'Never' }}</span>
                 <span class="stat-label">Last Updated</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value">
+                    <span id="ws-indicator" class="ws-indicator ws-disconnected" title="WebSocket Connection Status"></span>
+                </span>
+                <span class="stat-label">Live Updates</span>
             </div>
         </div>
     </header>
@@ -341,6 +347,184 @@
 
         // Load auto-scan status on page load
         loadAutoscanStatus();
+
+        // WebSocket Real-time Updates
+        (function() {
+            let ws = null;
+            let reconnectAttempts = 0;
+            let reconnectTimeout = null;
+            const maxReconnectDelay = 30000; // Max 30 seconds between reconnects
+            const wsIndicator = document.getElementById('ws-indicator');
+            
+            function updateConnectionStatus(connected) {
+                if (wsIndicator) {
+                    wsIndicator.className = 'ws-indicator ' + (connected ? 'ws-connected' : 'ws-disconnected');
+                    wsIndicator.title = connected ? 'Connected - Live updates active' : 'Disconnected - Reconnecting...';
+                }
+            }
+            
+            function showNewScoreToast(token) {
+                const symbol = token.symbol || '???';
+                const riskLevel = token.risk_level || 'UNKNOWN';
+                const message = `New score: ${symbol} - ${riskLevel}`;
+                showToast(message, riskLevel === 'CRITICAL' || riskLevel === 'HIGH' ? 'error' : 'info');
+            }
+            
+            function createTokenRow(token) {
+                const riskClass = 'risk-' + (token.risk_level ? token.risk_level.toLowerCase() : 'unknown');
+                const symbol = token.symbol || '???';
+                const name = token.name || 'Unknown';
+                const score = token.risk_score || 0;
+                const riskLevel = token.risk_level || 'UNKNOWN';
+                const creator = token.creator_username;
+                const concentration = token.top_10_concentration;
+                const walletAge = token.wallet_age_days;
+                const verdict = (token.ai_verdict || '').substring(0, 60);
+                const verdictTruncated = (token.ai_verdict || '').length > 60 ? '...' : '';
+                const scoredAt = token.scored_at ? token.scored_at.substring(0, 16) : '—';
+                const tokenMint = token.token_mint || '';
+                
+                const tr = document.createElement('tr');
+                tr.className = riskClass + ' new-score-row';
+                tr.innerHTML = `
+                    <td>
+                        <a href="/token/${tokenMint}">
+                            <strong>${symbol}</strong>
+                            <span class="token-name">${name}</span>
+                        </a>
+                    </td>
+                    <td>
+                        <span class="score-badge">${score}</span>
+                    </td>
+                    <td>
+                        <span class="risk-badge ${riskClass}">${riskLevel}</span>
+                    </td>
+                    <td>
+                        ${creator ? `<span class="creator">@${creator}</span>` : '<span class="creator-muted">Unknown</span>'}
+                    </td>
+                    <td>
+                        ${concentration ? concentration.toFixed(1) + '%' : '—'}
+                    </td>
+                    <td>
+                        ${walletAge !== null && walletAge >= 0 ? walletAge + 'd' : '—'}
+                    </td>
+                    <td class="verdict-cell">
+                        ${verdict}${verdictTruncated}
+                    </td>
+                    <td class="time-cell">
+                        ${scoredAt}
+                    </td>
+                `;
+                return tr;
+            }
+            
+            function addTokenToTable(token) {
+                const tbody = document.querySelector('.token-table tbody');
+                if (!tbody) return;
+                
+                // Check if token already exists
+                const existingRow = tbody.querySelector(`a[href="/token/${token.token_mint}"]`);
+                if (existingRow) {
+                    // Token already in table, don't add duplicate
+                    return;
+                }
+                
+                // Remove empty state if present
+                const emptyState = tbody.querySelector('.empty-state');
+                if (emptyState) {
+                    emptyState.parentElement.remove();
+                }
+                
+                // Create and prepend new row
+                const newRow = createTokenRow(token);
+                tbody.insertBefore(newRow, tbody.firstChild);
+                
+                // Remove animation class after animation completes
+                setTimeout(() => {
+                    newRow.classList.remove('new-score-row');
+                }, 2000);
+                
+                // Limit table to 50 rows
+                const rows = tbody.querySelectorAll('tr');
+                if (rows.length > 50) {
+                    for (let i = 50; i < rows.length; i++) {
+                        rows[i].remove();
+                    }
+                }
+                
+                // Update stats
+                refreshStats();
+            }
+            
+            function connect() {
+                const wsUrl = `ws://${window.location.host}/ws/scores`;
+                
+                try {
+                    ws = new WebSocket(wsUrl);
+                    
+                    ws.onopen = function() {
+                        reconnectAttempts = 0;
+                        updateConnectionStatus(true);
+                        console.log('[WebSocket] Connected');
+                    };
+                    
+                    ws.onmessage = function(event) {
+                        try {
+                            const message = JSON.parse(event.data);
+                            if (message.type === 'new_score' && message.data) {
+                                const token = message.data;
+                                addTokenToTable(token);
+                                showNewScoreToast(token);
+                            }
+                        } catch (e) {
+                            console.error('[WebSocket] Error parsing message:', e);
+                        }
+                    };
+                    
+                    ws.onclose = function() {
+                        updateConnectionStatus(false);
+                        console.log('[WebSocket] Disconnected');
+                        scheduleReconnect();
+                    };
+                    
+                    ws.onerror = function(error) {
+                        console.error('[WebSocket] Error:', error);
+                        ws.close();
+                    };
+                } catch (e) {
+                    console.error('[WebSocket] Failed to connect:', e);
+                    scheduleReconnect();
+                }
+            }
+            
+            function scheduleReconnect() {
+                if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+                }
+                
+                // Exponential backoff with max delay
+                const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), maxReconnectDelay);
+                reconnectAttempts++;
+                
+                reconnectTimeout = setTimeout(() => {
+                    console.log(`[WebSocket] Reconnecting... (attempt ${reconnectAttempts})`);
+                    connect();
+                }, delay);
+            }
+            
+            // Start connection
+            connect();
+            
+            // Cleanup on page unload
+            window.addEventListener('beforeunload', function() {
+                if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+                }
+                if (ws) {
+                    ws.close();
+                }
+            });
+        })();
     </script>
 </body>
 </html>

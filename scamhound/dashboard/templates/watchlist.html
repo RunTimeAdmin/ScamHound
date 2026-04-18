@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watchlist — ScamHound</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                <img src="/static/favicon-new.png" alt="ScamHound" class="logo-img" style="height: 32px; width: auto; margin-right: 8px; vertical-align: middle;">
+                <h1>ScamHound</h1>
+            </div>
+            <nav class="nav-links">
+                <a href="/">Dashboard</a>
+                <a href="/watchlist" class="active">Watchlist</a>
+                <a href="/settings">Settings</a>
+            </nav>
+            <p class="tagline">Real-time rug pull detection for Bags.fm</p>
+        </div>
+    </header>
+
+    <main>
+        <!-- Add to Watchlist Section -->
+        <div class="scan-section">
+            <div class="scan-box">
+                <div class="scan-header">
+                    <h3>Add Wallet to Watchlist</h3>
+                </div>
+                <div class="watchlist-form">
+                    <div class="form-row">
+                        <input 
+                            type="text" 
+                            id="wallet-address" 
+                            placeholder="Enter wallet address..." 
+                            class="scan-input"
+                            maxlength="44"
+                        >
+                    </div>
+                    <div class="form-row">
+                        <input 
+                            type="text" 
+                            id="wallet-label" 
+                            placeholder="Label (optional)..." 
+                            class="scan-input"
+                            maxlength="50"
+                        >
+                    </div>
+                    <div class="form-row">
+                        <textarea 
+                            id="wallet-notes" 
+                            placeholder="Notes (optional)..." 
+                            class="scan-input"
+                            maxlength="500"
+                            rows="2"
+                        ></textarea>
+                    </div>
+                    <div class="form-row">
+                        <button id="add-watchlist-btn" class="scan-button" onclick="addToWatchlist()">
+                            <span id="add-btn-text">Add to Watchlist</span>
+                            <span id="add-spinner" class="spinner" style="display: none;"></span>
+                        </button>
+                    </div>
+                </div>
+                <p class="scan-hint">Monitor creator wallets and get alerts when they launch new tokens</p>
+            </div>
+        </div>
+
+        <!-- Toast Notification -->
+        <div id="toast" class="toast" style="display: none;">
+            <span id="toast-message"></span>
+        </div>
+
+        <!-- Watchlist Table -->
+        <div class="token-table-container">
+            <div class="watchlist-header">
+                <h3>Watched Wallets</h3>
+                <span class="watchlist-count" id="watchlist-count">{{ watchlist|length }} wallet(s)</span>
+            </div>
+            <table class="token-table watchlist-table">
+                <thead>
+                    <tr>
+                        <th>Address</th>
+                        <th>Label</th>
+                        <th>Notes</th>
+                        <th>Added</th>
+                        <th>Last Seen</th>
+                        <th>Alerts</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="watchlist-tbody">
+                    {% for entry in watchlist %}
+                    <tr data-wallet="{{ entry.wallet_address }}">
+                        <td>
+                            <a href="/api/creator/{{ entry.wallet_address }}" class="wallet-address" title="{{ entry.wallet_address }}">
+                                {{ entry.wallet_address[:8] }}...{{ entry.wallet_address[-8:] }}
+                            </a>
+                        </td>
+                        <td>
+                            {% if entry.label %}
+                            <span class="wallet-label">{{ entry.label }}</span>
+                            {% else %}
+                            <span class="label-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="notes-cell">
+                            {% if entry.notes %}
+                            <span class="wallet-notes" title="{{ entry.notes }}">{{ entry.notes[:50] }}{% if entry.notes|length > 50 %}...{% endif %}</span>
+                            {% else %}
+                            <span class="label-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="time-cell">
+                            {{ entry.added_at[:16] if entry.added_at else '—' }}
+                        </td>
+                        <td class="time-cell">
+                            {{ entry.last_seen_at[:16] if entry.last_seen_at else 'Never' }}
+                        </td>
+                        <td>
+                            <span class="alert-count">{{ entry.alert_count or 0 }}</span>
+                        </td>
+                        <td>
+                            <button class="btn btn-danger btn-sm" onclick="removeFromWatchlist('{{ entry.wallet_address }}')">
+                                Remove
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr id="empty-state">
+                        <td colspan="7" class="empty-state">
+                            No wallets on watchlist. Add a wallet above to start monitoring.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a> (CCIE #14019)</p>
+            <p>Real-time rug pull detection powered by AI. <a href="https://twitter.com/ScamHoundCrypto" target="_blank">@ScamHoundCrypto</a></p>
+        </div>
+    </footer>
+
+    <script>
+        // Toast notification
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toast-message');
+            
+            toastMessage.textContent = message;
+            toast.className = 'toast ' + type;
+            toast.style.display = 'block';
+
+            setTimeout(() => {
+                toast.style.display = 'none';
+            }, 5000);
+        }
+
+        // Add wallet to watchlist
+        async function addToWatchlist() {
+            const addressInput = document.getElementById('wallet-address');
+            const labelInput = document.getElementById('wallet-label');
+            const notesInput = document.getElementById('wallet-notes');
+            const addBtn = document.getElementById('add-watchlist-btn');
+            const addBtnText = document.getElementById('add-btn-text');
+            const addSpinner = document.getElementById('add-spinner');
+
+            const walletAddress = addressInput.value.trim();
+            const label = labelInput.value.trim();
+            const notes = notesInput.value.trim();
+
+            if (!walletAddress) {
+                showToast('Please enter a wallet address', 'error');
+                return;
+            }
+
+            if (walletAddress.length < 32 || walletAddress.length > 44) {
+                showToast('Invalid wallet address format', 'error');
+                return;
+            }
+
+            // Show loading state
+            addBtn.disabled = true;
+            addBtnText.textContent = 'Adding...';
+            addSpinner.style.display = 'inline-block';
+
+            try {
+                const response = await fetch('/api/watchlist', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        wallet_address: walletAddress,
+                        label: label,
+                        notes: notes
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast('Wallet added to watchlist', 'success');
+                    addressInput.value = '';
+                    labelInput.value = '';
+                    notesInput.value = '';
+                    // Reload page to show updated list
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    showToast(data.error || 'Failed to add wallet', 'error');
+                }
+            } catch (e) {
+                console.error('Add to watchlist error:', e);
+                showToast('Network error. Please try again.', 'error');
+            } finally {
+                addBtn.disabled = false;
+                addBtnText.textContent = 'Add to Watchlist';
+                addSpinner.style.display = 'none';
+            }
+        }
+
+        // Remove wallet from watchlist
+        async function removeFromWatchlist(walletAddress) {
+            if (!confirm('Are you sure you want to remove this wallet from the watchlist?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/watchlist/${walletAddress}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast('Wallet removed from watchlist', 'success');
+                    // Remove row from table
+                    const row = document.querySelector(`tr[data-wallet="${walletAddress}"]`);
+                    if (row) {
+                        row.remove();
+                    }
+                    // Update count
+                    updateWatchlistCount();
+                    // Check if empty
+                    checkEmptyState();
+                } else {
+                    showToast(data.error || 'Failed to remove wallet', 'error');
+                }
+            } catch (e) {
+                console.error('Remove from watchlist error:', e);
+                showToast('Network error. Please try again.', 'error');
+            }
+        }
+
+        // Update watchlist count
+        function updateWatchlistCount() {
+            const tbody = document.getElementById('watchlist-tbody');
+            const count = tbody.querySelectorAll('tr[data-wallet]').length;
+            document.getElementById('watchlist-count').textContent = `${count} wallet(s)`;
+        }
+
+        // Check if table is empty and show empty state
+        function checkEmptyState() {
+            const tbody = document.getElementById('watchlist-tbody');
+            const rows = tbody.querySelectorAll('tr[data-wallet]');
+            
+            if (rows.length === 0) {
+                tbody.innerHTML = `
+                    <tr id="empty-state">
+                        <td colspan="7" class="empty-state">
+                            No wallets on watchlist. Add a wallet above to start monitoring.
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // Allow Enter key to submit on address field
+        document.getElementById('wallet-address').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                addToWatchlist();
+            }
+        });
+    </script>
+</body>
+</html>
