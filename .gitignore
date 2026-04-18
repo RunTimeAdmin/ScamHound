@@ -1,0 +1,36 @@
+# Environment and secrets
+.env
+config.json
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+.qoder/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+clear_db.py
+test_*.py
+
+# Logs
+*.log
+
+# Database
+*.sqlite
+*.sqlite3

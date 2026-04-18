@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            overflow: hidden;
+        }
+        
+        .widget {
+            width: 300px;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-radius: 8px;
+            background: #161b22;
+            border-left: 4px solid;
+            text-decoration: none;
+            color: inherit;
+        }
+        
+        .widget:hover {
+            background: #21262d;
+        }
+        
+        .widget-risk-low { border-left-color: #3fb950; }
+        .widget-risk-medium { border-left-color: #d29922; }
+        .widget-risk-high { border-left-color: #f85149; }
+        .widget-risk-critical { border-left-color: #ff0000; }
+        .widget-risk-unknown { border-left-color: #6e7681; }
+        
+        .widget-icon {
+            font-size: 24px;
+            margin-right: 12px;
+        }
+        
+        .widget-content {
+            flex: 1;
+        }
+        
+        .widget-symbol {
+            font-weight: 700;
+            font-size: 16px;
+            color: #e6edf3;
+        }
+        
+        .widget-score {
+            font-size: 13px;
+            color: #8b949e;
+            margin-top: 2px;
+        }
+        
+        .widget-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .badge-low { background: rgba(63, 185, 80, 0.2); color: #3fb950; }
+        .badge-medium { background: rgba(210, 153, 34, 0.2); color: #d29922; }
+        .badge-high { background: rgba(248, 81, 73, 0.2); color: #f85149; }
+        .badge-critical { background: rgba(255, 0, 0, 0.2); color: #ff0000; }
+        .badge-unknown { background: rgba(110, 118, 129, 0.2); color: #6e7681; }
+        
+        .widget-branding {
+            position: absolute;
+            bottom: 4px;
+            right: 12px;
+            font-size: 9px;
+            color: #484f58;
+        }
+    </style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+    <a href="/" target="_parent" class="widget widget-risk-{{ token.risk_level.lower() if token and token.risk_level else 'unknown' }}">
+        <span class="widget-icon">🐕</span>
+        <div class="widget-content">
+            <div class="widget-symbol">${{ token.symbol if token else token_mint[:8] }}</div>
+            <div class="widget-score">
+                {% if token %}
+                Risk Score: {{ token.risk_score or '?' }}/100
+                {% else %}
+                Not Yet Analyzed
+                {% endif %}
+            </div>
+        </div>
+        {% if token and token.risk_level %}
+        <span class="widget-badge badge-{{ token.risk_level.lower() }}">
+            {{ token.risk_level }}
+        </span>
+        {% else %}
+        <span class="widget-badge badge-unknown">PENDING</span>
+        {% endif %}
+    </a>
+    <div class="widget-branding">ScamHound | @ScamHoundCrypto</div>
+</body>
+</html>

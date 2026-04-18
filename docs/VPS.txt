@@ -1,0 +1,490 @@
+# ScamHound — Hostinger VPS Deployment Guide
+## Production Setup from Zero to Live
+
+**Target OS:** Ubuntu 22.04 LTS  
+**Minimum VPS spec:** KVM 1 (1 vCPU, 4GB RAM, 50GB NVMe) — ScamHound runs comfortably on this  
+**Recommended:** KVM 2 (2 vCPU, 8GB RAM) if you plan heavy traffic to the dashboard
+
+---
+
+## Phase 1 — Get Into Your Server
+
+### Step 1: Find Your SSH Credentials
+In your Hostinger hPanel:
+1. Click **VPS** in the left menu
+2. Select your server
+3. Go to **Overview → SSH Access**
+4. Note your: IP address, username (usually `root`), and password
+
+### Step 2: Connect via SSH
+On your local machine (Mac/Linux terminal, or Windows PowerShell):
+```bash
+ssh root@YOUR_VPS_IP_ADDRESS
+```
+
+Type `yes` when asked about the fingerprint, then enter your password.
+
+You're in. You'll see a prompt like `root@vps123456:~#`
+
+**Alternative:** If you prefer not to use a local SSH client, Hostinger has a Browser Terminal inside hPanel → VPS → Overview. It works the same way.
+
+---
+
+## Phase 2 — Initial Server Setup
+
+Run these commands in order. Copy and paste each block.
+
+### Step 3: Update the server
+```bash
+apt update && apt upgrade -y
+```
+This takes 2-3 minutes. Let it run.
+
+### Step 4: Install required system packages
+```bash
+apt install -y python3 python3-pip python3-venv git nginx certbot python3-certbot-nginx ufw curl
+```
+
+### Step 5: Verify Python version (need 3.10+)
+```bash
+python3 --version
+```
+Should show Python 3.10.x or higher. Ubuntu 22.04 ships with 3.10.
+
+### Step 6: Create a non-root user for running the app
+Running everything as root is bad practice. Create a dedicated user:
+```bash
+adduser scamhound
+# Set a strong password when prompted
+# Press Enter for all other fields (name, room number, etc.)
+
+# Give the user sudo access
+usermod -aG sudo scamhound
+
+# Switch to the new user
+su - scamhound
+```
+
+You're now running as `scamhound` user. Your prompt changes to `scamhound@vps:~$`
+
+---
+
+## Phase 3 — Set Up the Application
+
+### Step 7: Create project directory and clone your repo
+
+If using GitHub:
+```bash
+cd /home/scamhound
+git clone https://github.com/YOUR_USERNAME/scamhound.git
+cd scamhound
+```
+
+If you don't have a GitHub repo yet, create the directory manually:
+```bash
+mkdir -p /home/scamhound/scamhound
+cd /home/scamhound/scamhound
+```
+Then upload your files via SFTP (use FileZilla or Transmit — connect with same SSH credentials).
+
+### Step 8: Create Python virtual environment
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+Your prompt now shows `(venv)` at the start. This means you're inside the virtual environment. All Python packages install here, isolated from the rest of the server.
+
+### Step 9: Install Python dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### Step 10: Create the .env file with your API keys
+```bash
+nano .env
+```
+
+Paste your configuration (replace all placeholder values with real keys):
+```
+BAGS_API_KEY=your_key_from_dev.bags.fm
+HELIUS_API_KEY=your_key_from_helius.dev
+BIRDEYE_API_KEY=your_key_from_birdeye.so
+ANTHROPIC_API_KEY=your_anthropic_key
+TWITTER_BEARER_TOKEN=your_token
+TWITTER_API_KEY=your_key
+TWITTER_API_SECRET=your_secret
+TWITTER_ACCESS_TOKEN=your_access_token
+TWITTER_ACCESS_SECRET=your_access_secret
+RISK_ALERT_THRESHOLD=65
+POLL_INTERVAL_SECONDS=60
+PORT=8000
+DB_PATH=/home/scamhound/scamhound/scamhound.db
+```
+
+Save and exit: `Ctrl+X`, then `Y`, then `Enter`
+
+### Step 11: Test that the app starts correctly
+```bash
+python main.py
+```
+
+You should see output like:
+```
+[SCAMHOUND] Database initialized
+[SCAMHOUND] Starting monitor scheduler (60s interval)
+[SCAMHOUND] Dashboard starting on port 8000
+INFO:     Started server process
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+Test it by opening a browser and visiting: `http://YOUR_VPS_IP:8000`
+
+If the dashboard loads, it's working. Press `Ctrl+C` to stop it — we'll set it up as a background service next.
+
+---
+
+## Phase 4 — Keep It Running Forever with Systemd
+
+Right now if you close your SSH session, the app stops. Systemd turns ScamHound into a proper service that starts automatically on boot and restarts if it crashes.
+
+### Step 12: Switch back to root to create the service file
+```bash
+exit
+# You're now root again
+```
+
+### Step 13: Create the systemd service file
+```bash
+nano /etc/systemd/system/scamhound.service
+```
+
+Paste this exactly:
+```ini
+[Unit]
+Description=ScamHound Rug Pull Detection Service
+After=network.target
+
+[Service]
+Type=simple
+User=scamhound
+WorkingDirectory=/home/scamhound/scamhound
+Environment="PATH=/home/scamhound/scamhound/venv/bin"
+ExecStart=/home/scamhound/scamhound/venv/bin/python main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Save and exit: `Ctrl+X`, `Y`, `Enter`
+
+### Step 14: Enable and start the service
+```bash
+systemctl daemon-reload
+systemctl enable scamhound
+systemctl start scamhound
+```
+
+### Step 15: Check it's running
+```bash
+systemctl status scamhound
+```
+
+You should see `Active: active (running)` in green.
+
+To watch live logs:
+```bash
+journalctl -u scamhound -f
+```
+
+Press `Ctrl+C` to exit the log view. The service keeps running.
+
+**Useful service commands:**
+```bash
+systemctl stop scamhound       # Stop the service
+systemctl restart scamhound    # Restart after code changes
+systemctl status scamhound     # Check if it's running
+journalctl -u scamhound -n 50  # Show last 50 log lines
+```
+
+---
+
+## Phase 5 — Domain Name and HTTPS
+
+Judges need a clean URL, not a raw IP address. You need a domain and SSL for this to look professional.
+
+### Step 16: Point your domain to the VPS
+You need a domain name. Options:
+- Use a domain you already own (recommended — use scamhound.app or scamhound.xyz)
+- Buy one cheap at Namecheap ($10/year for .xyz)
+
+In your domain registrar's DNS settings, add an A record:
+```
+Type: A
+Name: @ (or subdomain like scamhound)
+Value: YOUR_VPS_IP_ADDRESS
+TTL: 300
+```
+
+Wait 5-30 minutes for DNS to propagate.
+
+Test it:
+```bash
+ping yourdomain.com
+# Should resolve to your VPS IP
+```
+
+### Step 17: Configure Nginx as a reverse proxy
+Nginx sits in front of your FastAPI app and handles SSL, port 80/443, and forwards requests to port 8000.
+
+Switch back to root:
+```bash
+sudo -i
+# or if you stayed as root, skip this
+```
+
+Create the Nginx config:
+```bash
+nano /etc/nginx/sites-available/scamhound
+```
+
+Paste this (replace `yourdomain.com` with your actual domain):
+```nginx
+server {
+    listen 80;
+    server_name yourdomain.com www.yourdomain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+    }
+}
+```
+
+Save and exit.
+
+Enable the config:
+```bash
+ln -s /etc/nginx/sites-available/scamhound /etc/nginx/sites-enabled/
+nginx -t    # Test config — should say "syntax is ok"
+systemctl restart nginx
+```
+
+### Step 18: Install SSL certificate (HTTPS)
+```bash
+certbot --nginx -d yourdomain.com -d www.yourdomain.com
+```
+
+Follow the prompts:
+- Enter your email address
+- Agree to terms (type `Y`)
+- Choose whether to share email with EFF (your choice)
+- When asked about redirect: choose `2` (redirect HTTP to HTTPS)
+
+Certbot automatically updates your Nginx config and sets up auto-renewal.
+
+Test HTTPS is working:
+```bash
+curl https://yourdomain.com
+```
+
+Your dashboard is now live at `https://yourdomain.com`
+
+**SSL auto-renewal** is handled by Certbot's cron job automatically. You don't need to do anything.
+
+---
+
+## Phase 6 — Firewall Configuration
+
+### Step 19: Configure UFW (Uncomplicated Firewall)
+Hostinger has a hardware-level DDoS filter, but you still want OS-level firewall rules.
+
+```bash
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh          # Port 22 — CRITICAL: do this first or you'll lock yourself out
+ufw allow 80/tcp       # HTTP
+ufw allow 443/tcp      # HTTPS
+ufw enable
+```
+
+When asked "Command may disrupt existing ssh connections. Proceed with operation?" type `y`.
+
+Verify:
+```bash
+ufw status
+```
+
+Should show:
+```
+Status: active
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW       Anywhere
+80/tcp                     ALLOW       Anywhere
+443/tcp                    ALLOW       Anywhere
+```
+
+Port 8000 (your FastAPI app) is intentionally NOT open — only Nginx can talk to it from inside the server. This is correct.
+
+---
+
+## Phase 7 — Updating the App After Code Changes
+
+When you make changes to your code and push to GitHub:
+
+```bash
+# SSH into the server
+ssh root@YOUR_VPS_IP
+
+# Switch to scamhound user
+su - scamhound
+cd /home/scamhound/scamhound
+
+# Pull latest code
+git pull origin main
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install any new dependencies
+pip install -r requirements.txt
+
+# Exit back to root
+exit
+
+# Restart the service
+systemctl restart scamhound
+
+# Check it's healthy
+systemctl status scamhound
+```
+
+---
+
+## Phase 8 — Monitoring and Logs
+
+### View live logs
+```bash
+journalctl -u scamhound -f
+```
+
+### View the last 100 lines
+```bash
+journalctl -u scamhound -n 100
+```
+
+### Check disk usage (SQLite database grows over time)
+```bash
+df -h
+du -sh /home/scamhound/scamhound/scamhound.db
+```
+
+### Check memory usage
+```bash
+free -h
+```
+
+### Check if the service has been restarting unexpectedly
+```bash
+journalctl -u scamhound --since "24 hours ago" | grep -i "restart\|error\|failed"
+```
+
+---
+
+## Phase 9 — Backup the Database
+
+The SQLite database holds all your scored tokens. Back it up regularly.
+
+### Manual backup
+```bash
+cp /home/scamhound/scamhound/scamhound.db /home/scamhound/scamhound/backups/scamhound_$(date +%Y%m%d).db
+```
+
+### Automated daily backup with cron
+```bash
+# Edit cron for root user
+crontab -e
+
+# Add this line (runs at 2 AM every day)
+0 2 * * * cp /home/scamhound/scamhound/scamhound.db /home/scamhound/scamhound/backups/scamhound_$(date +\%Y\%m\%d).db
+```
+
+Hostinger also provides automated weekly VPS snapshots on most plans — verify this is enabled in hPanel.
+
+---
+
+## Phase 10 — Quick Reference
+
+### Full deployment checklist
+- [ ] Ubuntu 22.04 VPS running on Hostinger
+- [ ] Non-root `scamhound` user created
+- [ ] Python virtual environment set up
+- [ ] `.env` file created with all API keys
+- [ ] App tested manually (`python main.py`)
+- [ ] Systemd service created and enabled
+- [ ] Service confirmed running (`systemctl status scamhound`)
+- [ ] Domain DNS A record pointing to VPS IP
+- [ ] Nginx reverse proxy configured
+- [ ] SSL certificate installed via Certbot
+- [ ] UFW firewall enabled (22, 80, 443 open only)
+- [ ] Dashboard accessible at https://yourdomain.com
+- [ ] Logs showing token scans running
+
+### Key file locations
+```
+App code:          /home/scamhound/scamhound/
+Virtual env:       /home/scamhound/scamhound/venv/
+Environment vars:  /home/scamhound/scamhound/.env
+Database:          /home/scamhound/scamhound/scamhound.db
+Systemd service:   /etc/systemd/system/scamhound.service
+Nginx config:      /etc/nginx/sites-available/scamhound
+SSL certs:         /etc/letsencrypt/live/yourdomain.com/
+```
+
+### Emergency commands
+```bash
+# App crashed — restart it
+systemctl restart scamhound
+
+# Nginx down — restart it
+systemctl restart nginx
+
+# Check what's using port 8000
+lsof -i :8000
+
+# Kill a stuck process
+kill -9 PID_NUMBER
+
+# Check server load
+htop
+```
+
+---
+
+## Minimum VPS Recommendation for ScamHound
+
+The entry-level Hostinger KVM 1 plan (1 vCPU, 4GB RAM, 50GB NVMe) is sufficient. Here's why:
+
+- FastAPI + Uvicorn: uses ~100MB RAM at idle
+- SQLite: negligible memory, tiny disk footprint at the scale of token scanning
+- APScheduler: minimal CPU, runs one cycle per minute
+- Claude API calls: outbound HTTP only, no local computation
+- Peak usage during a scan cycle: ~200MB RAM, <5% CPU
+
+You'd only need to upgrade if the dashboard gets significant public traffic (thousands of concurrent visitors), which would be a good problem to have.
+
+The 4TB monthly bandwidth included on the entry plan is far more than ScamHound will use.

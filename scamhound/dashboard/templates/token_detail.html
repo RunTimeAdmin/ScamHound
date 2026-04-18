@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ token.symbol or 'Token' }} — ScamHound Analysis</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                <a href="/" class="logo-link">
+                    <img src="/static/favicon-new.png" alt="ScamHound" class="logo-img" style="height: 32px; width: auto; margin-right: 8px; vertical-align: middle;">
+                    <h1>ScamHound</h1>
+                </a>
+            </div>
+            <nav class="nav-links">
+                <a href="/">Dashboard</a>
+                <a href="/settings">Settings</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="detail-page">
+        {% if token %}
+        <div class="token-header risk-bg-{{ token.risk_level.lower() if token.risk_level else 'unknown' }}">
+            <div class="token-info">
+                <h2>${{ token.symbol or '???' }}</h2>
+                <p class="token-name-full">{{ token.name or 'Unknown Token' }}</p>
+                <p class="token-mint">{{ token.token_mint }}</p>
+            </div>
+            <div class="score-display">
+                <div class="big-score risk-{{ token.risk_level.lower() if token.risk_level else 'unknown' }}">
+                    {{ token.risk_score or 0 }}
+                </div>
+                <span class="risk-badge risk-{{ token.risk_level.lower() if token.risk_level else 'unknown' }} large">
+                    {{ token.risk_level or 'UNKNOWN' }}
+                </span>
+            </div>
+        </div>
+
+        <div class="verdict-box risk-border-{{ token.risk_level.lower() if token.risk_level else 'unknown' }}">
+            <h3>🤖 AI Verdict</h3>
+            <p>{{ token.ai_verdict or 'No analysis available.' }}</p>
+        </div>
+
+        <div class="detail-grid">
+            <div class="detail-section">
+                <h4>🔴 Risk Factors</h4>
+                <ul class="risk-factors">
+                    {% for factor in (token.top_risk_factors or []) %}
+                    <li class="risk-item">{{ factor }}</li>
+                    {% else %}
+                    <li class="no-items">No significant risk factors detected</li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <div class="detail-section">
+                <h4>✅ Safe Signals</h4>
+                <ul class="safe-signals">
+                    {% for signal in (token.top_safe_signals or []) %}
+                    <li class="safe-item">{{ signal }}</li>
+                    {% else %}
+                    <li class="no-items">No positive signals identified</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        <div class="data-tables">
+            <div class="detail-section">
+                <h4>📊 On-Chain Data</h4>
+                <table class="data-table">
+                    <tr>
+                        <td>Creator Wallet</td>
+                        <td>
+                            {% if token.creator_wallet %}
+                            <a href="https://solscan.io/account/{{ token.creator_wallet }}" target="_blank">
+                                {{ token.creator_wallet[:8] }}...{{ token.creator_wallet[-4:] }}
+                            </a>
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Creator Username</td>
+                        <td>{{ token.creator_username or 'Unknown' }}</td>
+                    </tr>
+                    <tr>
+                        <td>Wallet Age</td>
+                        <td>
+                            {% if token.wallet_age_days and token.wallet_age_days >= 0 %}
+                            {{ token.wallet_age_days }} days
+                            {% if token.wallet_age_days < 7 %}
+                            <span class="warning-text">⚠️ NEW WALLET</span>
+                            {% endif %}
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Prior Launches</td>
+                        <td>{{ token.prior_launches or 0 }}</td>
+                    </tr>
+                    <tr>
+                        <td>Top 10 Concentration</td>
+                        <td>
+                            {% if token.top_10_concentration %}
+                            {{ "%.1f"|format(token.top_10_concentration) }}%
+                            {% if token.top_10_concentration > 60 %}
+                            <span class="warning-text">⚠️ HIGH</span>
+                            {% endif %}
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Holder Clustering Score</td>
+                        <td>
+                            {% if token.clustering_score %}
+                            {{ "%.2f"|format(token.clustering_score) }}
+                            {% if token.clustering_score > 0.4 %}
+                            <span class="warning-text">⚠️ SUSPICIOUS</span>
+                            {% endif %}
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Liquidity (USD)</td>
+                        <td>${{ "{:,.0f}".format(token.liquidity_usd) if token.liquidity_usd else '—' }}</td>
+                    </tr>
+                    <tr>
+                        <td>Lifetime Fees (SOL)</td>
+                        <td>{{ "%.4f"|format(token.lifetime_fees_sol) if token.lifetime_fees_sol else '—' }}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <div class="detail-section">
+                <h4>🔗 Links</h4>
+                <div class="link-buttons">
+                    <a href="https://bags.fm/{{ token.token_mint }}" target="_blank" class="btn btn-primary">
+                        View on Bags.fm
+                    </a>
+                    {% if token.creator_wallet %}
+                    <a href="https://solscan.io/account/{{ token.creator_wallet }}" target="_blank" class="btn btn-secondary">
+                        Creator on Solscan
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="detail-section embed-section">
+            <h4>📋 Embed This Badge</h4>
+            <p>Copy this code to embed the ScamHound risk badge on your site:</p>
+            <code class="embed-code">
+                <iframe src="https://your-domain.com/widget/{{ token.token_mint }}" width="300" height="80" frameborder="0"></iframe>
+            </code>
+        </div>
+
+        <div class="detail-section timestamps">
+            <p><strong>Launched:</strong> {{ token.created_at or 'Unknown' }}</p>
+            <p><strong>Scored:</strong> {{ token.scored_at or 'Unknown' }}</p>
+        </div>
+
+        {% else %}
+        <div class="error-state">
+            <h2>Token Not Found</h2>
+            <p>The requested token has not been analyzed by ScamHound yet.</p>
+            <a href="/" class="btn btn-primary">Back to Dashboard</a>
+        </div>
+        {% endif %}
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a></p>
+        </div>
+    </footer>
+</body>
+</html>

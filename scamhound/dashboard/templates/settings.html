@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings — ScamHound</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <style>
+        /* Settings page specific styles */
+        .settings-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .settings-header {
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color, #333);
+        }
+
+        .settings-header h2 {
+            color: var(--text-primary, #fff);
+            font-size: 1.75rem;
+            margin: 0 0 0.5rem 0;
+        }
+
+        .settings-header p {
+            color: var(--text-secondary, #888);
+            margin: 0;
+        }
+
+        .settings-section {
+            background: var(--card-bg, #1a1a1a);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--border-color, #333);
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1.25rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--border-color, #333);
+        }
+
+        .section-header h3 {
+            color: var(--text-primary, #fff);
+            font-size: 1.1rem;
+            margin: 0;
+        }
+
+        .section-header .icon {
+            font-size: 1.2rem;
+        }
+
+        .priority-label {
+            margin-left: auto;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            background: var(--warning-bg, #3d3d1a);
+            color: var(--warning-text, #d4d400);
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .form-group label {
+            display: block;
+            color: var(--text-secondary, #aaa);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .input-wrapper input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            padding-right: 3rem;
+            background: var(--input-bg, #0d0d0d);
+            border: 1px solid var(--border-color, #333);
+            border-radius: 8px;
+            color: var(--text-primary, #fff);
+            font-size: 0.9rem;
+            font-family: monospace;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .input-wrapper input:focus {
+            outline: none;
+            border-color: var(--accent-color, #4a9eff);
+            box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.2);
+        }
+
+        .input-wrapper input::placeholder {
+            color: var(--text-muted, #666);
+        }
+
+        .toggle-btn {
+            position: absolute;
+            right: 0.75rem;
+            background: none;
+            border: none;
+            color: var(--text-secondary, #888);
+            cursor: pointer;
+            padding: 0.25rem;
+            font-size: 1.1rem;
+            transition: color 0.2s;
+        }
+
+        .toggle-btn:hover {
+            color: var(--text-primary, #fff);
+        }
+
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 1rem;
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border-color, #333);
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--border-color, #444);
+            color: var(--text-secondary, #aaa);
+        }
+
+        .btn-secondary:hover {
+            background: var(--hover-bg, #252525);
+            color: var(--text-primary, #fff);
+        }
+
+        .btn-primary {
+            background: var(--accent-color, #4a9eff);
+            border: 1px solid var(--accent-color, #4a9eff);
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover, #3a8eef);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* Toast notifications */
+        .toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .toast {
+            padding: 1rem 1.25rem;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 0.9rem;
+            animation: slideIn 0.3s ease;
+            max-width: 350px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .toast.success {
+            background: #22c55e;
+        }
+
+        .toast.error {
+            background: #ef4444;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
+
+        .toast.hiding {
+            animation: slideOut 0.3s ease forwards;
+        }
+
+        /* CSS Variables fallback */
+        :root {
+            --text-primary: #fff;
+            --text-secondary: #aaa;
+            --text-muted: #666;
+            --card-bg: #1a1a1a;
+            --input-bg: #0d0d0d;
+            --border-color: #333;
+            --accent-color: #4a9eff;
+            --accent-hover: #3a8eef;
+            --hover-bg: #252525;
+            --warning-bg: #3d3d1a;
+            --warning-text: #d4d400;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                <a href="/" class="logo-link">
+                    <img src="/static/favicon-new.png" alt="ScamHound" class="logo-img" style="height: 32px; width: auto; margin-right: 8px; vertical-align: middle;">
+                    <h1>ScamHound</h1>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <main class="settings-page">
+        <div class="settings-container">
+            <div class="settings-header">
+                <h2>⚙️ API Settings</h2>
+                <p>Configure your API keys and application settings. All values are stored locally in config.json.</p>
+            </div>
+
+            <form id="settings-form">
+                <!-- Bags.fm Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="icon">🎒</span>
+                        <h3>Bags.fm</h3>
+                    </div>
+                    <div class="form-group">
+                        <label for="BAGS_API_KEY">API Key</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="BAGS_API_KEY" name="BAGS_API_KEY"
+                                   placeholder="{{ masked_keys.BAGS_API_KEY }}">
+                            <button type="button" class="toggle-btn" data-target="BAGS_API_KEY" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Helius Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="icon">⚡</span>
+                        <h3>Helius</h3>
+                    </div>
+                    <div class="form-group">
+                        <label for="HELIUS_API_KEY">API Key</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="HELIUS_API_KEY" name="HELIUS_API_KEY"
+                                   placeholder="{{ masked_keys.HELIUS_API_KEY }}">
+                            <button type="button" class="toggle-btn" data-target="HELIUS_API_KEY" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Birdeye Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="icon">🦅</span>
+                        <h3>Birdeye</h3>
+                    </div>
+                    <div class="form-group">
+                        <label for="BIRDEYE_API_KEY">API Key</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="BIRDEYE_API_KEY" name="BIRDEYE_API_KEY"
+                                   placeholder="{{ masked_keys.BIRDEYE_API_KEY }}">
+                            <button type="button" class="toggle-btn" data-target="BIRDEYE_API_KEY" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Anthropic Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="icon">🤖</span>
+                        <h3>Anthropic / Claude</h3>
+                    </div>
+                    <div class="form-group">
+                        <label for="ANTHROPIC_API_KEY">API Key</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="ANTHROPIC_API_KEY" name="ANTHROPIC_API_KEY"
+                                   placeholder="{{ masked_keys.ANTHROPIC_API_KEY }}">
+                            <button type="button" class="toggle-btn" data-target="ANTHROPIC_API_KEY" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Twitter Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="icon">🐦</span>
+                        <h3>Twitter / X</h3>
+                        <span class="priority-label">Low Priority</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="TWITTER_BEARER_TOKEN">Bearer Token</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="TWITTER_BEARER_TOKEN" name="TWITTER_BEARER_TOKEN"
+                                   placeholder="{{ masked_keys.TWITTER_BEARER_TOKEN }}">
+                            <button type="button" class="toggle-btn" data-target="TWITTER_BEARER_TOKEN" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="TWITTER_API_KEY">API Key</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="TWITTER_API_KEY" name="TWITTER_API_KEY"
+                                   placeholder="{{ masked_keys.TWITTER_API_KEY }}">
+                            <button type="button" class="toggle-btn" data-target="TWITTER_API_KEY" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="TWITTER_API_SECRET">API Secret</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="TWITTER_API_SECRET" name="TWITTER_API_SECRET"
+                                   placeholder="{{ masked_keys.TWITTER_API_SECRET }}">
+                            <button type="button" class="toggle-btn" data-target="TWITTER_API_SECRET" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="TWITTER_ACCESS_TOKEN">Access Token</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="TWITTER_ACCESS_TOKEN" name="TWITTER_ACCESS_TOKEN"
+                                   placeholder="{{ masked_keys.TWITTER_ACCESS_TOKEN }}">
+                            <button type="button" class="toggle-btn" data-target="TWITTER_ACCESS_TOKEN" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="TWITTER_ACCESS_SECRET">Access Secret</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="TWITTER_ACCESS_SECRET" name="TWITTER_ACCESS_SECRET"
+                                   placeholder="{{ masked_keys.TWITTER_ACCESS_SECRET }}">
+                            <button type="button" class="toggle-btn" data-target="TWITTER_ACCESS_SECRET" title="Show/Hide">
+                                👁️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- General Settings Section -->
+                <div class="settings-section">
+                    <div class="section-header">
+                        <span class="icon">⚙️</span>
+                        <h3>General Settings</h3>
+                    </div>
+                    <div class="form-group">
+                        <label for="RISK_ALERT_THRESHOLD">Risk Alert Threshold</label>
+                        <div class="input-wrapper">
+                            <input type="text" id="RISK_ALERT_THRESHOLD" name="RISK_ALERT_THRESHOLD"
+                                   placeholder="{{ masked_keys.RISK_ALERT_THRESHOLD }}">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="POLL_INTERVAL_SECONDS">Poll Interval (seconds)</label>
+                        <div class="input-wrapper">
+                            <input type="text" id="POLL_INTERVAL_SECONDS" name="POLL_INTERVAL_SECONDS"
+                                   placeholder="{{ masked_keys.POLL_INTERVAL_SECONDS }}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
+                    <button type="submit" class="btn btn-primary" id="save-btn">
+                        💾 Save Settings
+                    </button>
+                </div>
+            </form>
+        </div>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a></p>
+        </div>
+    </footer>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+        // Show/hide toggle functionality
+        document.querySelectorAll('.toggle-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const targetId = this.getAttribute('data-target');
+                const input = document.getElementById(targetId);
+                
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    this.textContent = '🙈';
+                } else {
+                    input.type = 'password';
+                    this.textContent = '👁️';
+                }
+            });
+        });
+
+        // Toast notification function
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.add('hiding');
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
+        // Form submission
+        document.getElementById('settings-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const saveBtn = document.getElementById('save-btn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = '💾 Saving...';
+
+            // Collect form data
+            const formData = new FormData(this);
+            const data = {};
+            
+            // Get all input names
+            const inputs = this.querySelectorAll('input[name]');
+            inputs.forEach(input => {
+                data[input.name] = input.value.trim();
+            });
+
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    showToast('Settings saved successfully!', 'success');
+                    // Clear input fields after successful save
+                    inputs.forEach(input => input.value = '');
+                } else {
+                    showToast(result.error || 'Failed to save settings', 'error');
+                }
+            } catch (error) {
+                showToast('Network error: ' + error.message, 'error');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Save Settings';
+            }
+        });
+    </script>
+</body>
+</html>

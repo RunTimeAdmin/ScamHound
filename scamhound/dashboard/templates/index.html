@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="60">
+    <title>ScamHound — Real-time Rug Pull Detection for Bags.fm</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                <img src="/static/favicon-new.png" alt="ScamHound" class="logo-img" style="height: 32px; width: auto; margin-right: 8px; vertical-align: middle;">
+                <h1>ScamHound</h1>
+            </div>
+            <nav class="nav-links">
+                <a href="/" class="active">Dashboard</a>
+                <a href="/settings">Settings</a>
+            </nav>
+            <p class="tagline">Real-time rug pull detection for Bags.fm</p>
+        </div>
+        <div class="stats-bar">
+            <div class="stat">
+                <span class="stat-value" id="total-scanned">{{ stats.total_scanned or 0 }}</span>
+                <span class="stat-label">Total Scanned</span>
+            </div>
+            <div class="stat stat-warning">
+                <span class="stat-value" id="high-risk">{{ stats.high_risk or 0 }}</span>
+                <span class="stat-label">High Risk</span>
+            </div>
+            <div class="stat stat-danger">
+                <span class="stat-value" id="critical">{{ stats.critical_alerts or 0 }}</span>
+                <span class="stat-label">Critical</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value" id="last-updated">{{ stats.last_updated or 'Never' }}</span>
+                <span class="stat-label">Last Updated</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Manual Scan Section -->
+        <div class="scan-section">
+            <div class="scan-box">
+                <h3>Scan Token</h3>
+                <div class="scan-input-group">
+                    <input 
+                        type="text" 
+                        id="scan-mint" 
+                        placeholder="Enter token mint address..." 
+                        class="scan-input"
+                        maxlength="44"
+                    >
+                    <button id="scan-btn" class="scan-button" onclick="scanToken()">
+                        <span id="scan-btn-text">Scan Token</span>
+                        <span id="scan-spinner" class="spinner" style="display: none;"></span>
+                    </button>
+                </div>
+                <p class="scan-hint">Enter a Solana token mint address to analyze it immediately</p>
+            </div>
+        </div>
+
+        <!-- Toast Notification -->
+        <div id="toast" class="toast" style="display: none;">
+            <span id="toast-message"></span>
+        </div>
+
+        <div class="token-table-container">
+            <table class="token-table">
+                <thead>
+                    <tr>
+                        <th>Token</th>
+                        <th>Score</th>
+                        <th>Risk Level</th>
+                        <th>Creator</th>
+                        <th>Concentration</th>
+                        <th>Wallet Age</th>
+                        <th>Verdict</th>
+                        <th>Scored At</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for token in scores %}
+                    <tr class="risk-{{ token.risk_level.lower() if token.risk_level else 'unknown' }}">
+                        <td>
+                            <a href="/token/{{ token.token_mint }}">
+                                <strong>{{ token.symbol or '???' }}</strong>
+                                <span class="token-name">{{ token.name or 'Unknown' }}</span>
+                            </a>
+                        </td>
+                        <td>
+                            <span class="score-badge">{{ token.risk_score or 0 }}</span>
+                        </td>
+                        <td>
+                            <span class="risk-badge risk-{{ token.risk_level.lower() if token.risk_level else 'unknown' }}">
+                                {{ token.risk_level or 'UNKNOWN' }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if token.creator_username %}
+                            <span class="creator">@{{ token.creator_username }}</span>
+                            {% else %}
+                            <span class="creator-muted">Unknown</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if token.top_10_concentration %}
+                            {{ "%.1f"|format(token.top_10_concentration) }}%
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if token.wallet_age_days and token.wallet_age_days >= 0 %}
+                            {{ token.wallet_age_days }}d
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                        <td class="verdict-cell">
+                            {{ (token.ai_verdict or '')[:60] }}{% if (token.ai_verdict or '')|length > 60 %}...{% endif %}
+                        </td>
+                        <td class="time-cell">
+                            {{ token.scored_at[:16] if token.scored_at else '—' }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="empty-state">
+                            No tokens scanned yet. Monitoring will begin shortly.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a> (CCIE #14019)</p>
+            <p>Real-time rug pull detection powered by AI. <a href="https://twitter.com/ScamHoundCrypto" target="_blank">@ScamHoundCrypto</a></p>
+        </div>
+    </footer>
+
+    <script>
+        // Auto-refresh stats via API
+        async function refreshStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                document.getElementById('total-scanned').textContent = data.total_scanned || 0;
+                document.getElementById('high-risk').textContent = data.high_risk || 0;
+                document.getElementById('critical').textContent = data.critical_alerts || 0;
+            } catch (e) {
+                console.error('Failed to refresh stats:', e);
+            }
+        }
+
+        // Refresh every 30 seconds
+        setInterval(refreshStats, 30000);
+
+        // Manual token scan functionality
+        async function scanToken() {
+            const mintInput = document.getElementById('scan-mint');
+            const scanBtn = document.getElementById('scan-btn');
+            const scanBtnText = document.getElementById('scan-btn-text');
+            const scanSpinner = document.getElementById('scan-spinner');
+            const mint = mintInput.value.trim();
+
+            if (!mint) {
+                showToast('Please enter a token mint address', 'error');
+                return;
+            }
+
+            if (mint.length < 32 || mint.length > 44) {
+                showToast('Invalid mint address format', 'error');
+                return;
+            }
+
+            // Show loading state
+            scanBtn.disabled = true;
+            scanBtnText.textContent = 'Scanning...';
+            scanSpinner.style.display = 'inline-block';
+
+            try {
+                const response = await fetch('/api/scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ mint: mint })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast(`Scan complete! ${data.result.symbol} scored ${data.result.risk_score} (${data.result.risk_level})`, 'success');
+                    mintInput.value = '';
+                    // Refresh stats and reload page after a short delay
+                    refreshStats();
+                    setTimeout(() => window.location.reload(), 2000);
+                } else {
+                    showToast(data.error || 'Scan failed', 'error');
+                }
+            } catch (e) {
+                console.error('Scan error:', e);
+                showToast('Network error. Please try again.', 'error');
+            } finally {
+                // Reset button state
+                scanBtn.disabled = false;
+                scanBtnText.textContent = 'Scan Token';
+                scanSpinner.style.display = 'none';
+            }
+        }
+
+        // Toast notification
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toast-message');
+            
+            toastMessage.textContent = message;
+            toast.className = 'toast ' + type;
+            toast.style.display = 'block';
+
+            setTimeout(() => {
+                toast.style.display = 'none';
+            }, 5000);
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('scan-mint').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                scanToken();
+            }
+        });
+    </script>
+</body>
+</html>
