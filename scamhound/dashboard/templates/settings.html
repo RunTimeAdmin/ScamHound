@@ -252,11 +252,17 @@
     <header>
         <div class="header-content">
             <div class="logo">
-                <a href="/" class="logo-link">
+                <a href="/" class="logo-link" id="logo-link">
                     <img src="/static/favicon-new.png" alt="ScamHound" class="logo-img" style="height: 32px; width: auto; margin-right: 8px; vertical-align: middle;">
                     <h1>ScamHound</h1>
                 </a>
             </div>
+            <nav class="nav-links">
+                <a href="/" id="nav-dashboard">Dashboard</a>
+                <a href="/watchlist" id="nav-watchlist">Watchlist</a>
+                <a href="/settings" class="active">Settings</a>
+            </nav>
+            <p class="tagline">Real-time rug pull detection for Bags.fm</p>
         </div>
     </header>
 
@@ -440,7 +446,7 @@
                 </div>
 
                 <div class="form-actions">
-                    <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
+                    <a href="/" class="btn btn-secondary" id="back-btn">← Back to Dashboard</a>
                     <button type="submit" class="btn btn-primary" id="save-btn">
                         💾 Save Settings
                     </button>
@@ -458,6 +464,33 @@
     <div class="toast-container" id="toast-container"></div>
 
     <script>
+        // Preserve token across navigation links
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const adminToken = urlParams.get('token');
+            if (adminToken) {
+                // Update logo link
+                const logoLink = document.getElementById('logo-link');
+                if (logoLink) {
+                    logoLink.href = '/?token=' + encodeURIComponent(adminToken);
+                }
+                // Update nav links
+                const dashboardLink = document.getElementById('nav-dashboard');
+                if (dashboardLink) {
+                    dashboardLink.href = '/?token=' + encodeURIComponent(adminToken);
+                }
+                const watchlistLink = document.getElementById('nav-watchlist');
+                if (watchlistLink) {
+                    watchlistLink.href = '/watchlist?token=' + encodeURIComponent(adminToken);
+                }
+                // Update back button
+                const backBtn = document.getElementById('back-btn');
+                if (backBtn) {
+                    backBtn.href = '/?token=' + encodeURIComponent(adminToken);
+                }
+            }
+        })();
+
         // Show/hide toggle functionality
         document.querySelectorAll('.toggle-btn').forEach(btn => {
             btn.addEventListener('click', function() {

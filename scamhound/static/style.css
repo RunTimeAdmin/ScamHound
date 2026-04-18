@@ -1954,7 +1954,211 @@ textarea::placeholder {
 }
 
 /* --------------------------------------------------------------------------
-   23. Watchlist Styles
+   23. Disclaimer Banner Styles
+   -------------------------------------------------------------------------- */
+
+/* Disclaimer Banner - Collapsible warning/info section */
+.disclaimer-banner {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-left: 4px solid var(--status-warning);
+    border-radius: var(--radius-md);
+    margin: var(--space-lg) var(--space-xl);
+    overflow: hidden;
+    box-shadow: var(--shadow-md);
+    transition: all var(--transition-normal);
+}
+
+.disclaimer-banner.collapsed {
+    border-left-color: var(--text-muted);
+}
+
+.disclaimer-banner.collapsed .disclaimer-content {
+    max-height: 0;
+    opacity: 0;
+    padding: 0 var(--space-lg);
+}
+
+.disclaimer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-md) var(--space-lg);
+    cursor: pointer;
+    background: rgba(210, 153, 34, 0.05);
+    transition: background var(--transition-fast);
+}
+
+.disclaimer-header:hover {
+    background: rgba(210, 153, 34, 0.1);
+}
+
+.disclaimer-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--status-warning);
+    margin: 0;
+}
+
+.disclaimer-banner.collapsed .disclaimer-title {
+    color: var(--text-secondary);
+}
+
+.disclaimer-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    transition: all var(--transition-fast);
+    padding: 0;
+}
+
+.disclaimer-toggle:hover {
+    color: var(--text-primary);
+    transform: scale(1.1);
+}
+
+.disclaimer-toggle .chevron {
+    transition: transform var(--transition-normal);
+}
+
+.disclaimer-banner.collapsed .disclaimer-toggle .chevron {
+    transform: rotate(-90deg);
+}
+
+.disclaimer-content {
+    max-height: 600px;
+    opacity: 1;
+    padding: var(--space-lg);
+    transition: all var(--transition-slow);
+    overflow: hidden;
+}
+
+.disclaimer-content h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--space-md);
+}
+
+.disclaimer-content p {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.7;
+    margin-bottom: var(--space-md);
+}
+
+.disclaimer-content ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.disclaimer-content li {
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.6;
+    padding: var(--space-sm) 0;
+    padding-left: var(--space-md);
+    position: relative;
+    border-bottom: 1px solid var(--border-secondary);
+}
+
+.disclaimer-content li:last-child {
+    border-bottom: none;
+}
+
+.disclaimer-content li::before {
+    content: '•';
+    position: absolute;
+    left: 0;
+    color: var(--status-warning);
+    font-weight: bold;
+}
+
+.disclaimer-content li strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.disclaimer-content .disclaimer-footer {
+    margin-top: var(--space-md);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--border-secondary);
+    font-style: italic;
+    color: var(--text-muted);
+}
+
+/* Footer Disclaimer */
+.footer-disclaimer {
+    text-align: center;
+    padding: var(--space-md) var(--space-lg);
+    margin-top: var(--space-md);
+    border-top: 1px solid var(--border-secondary);
+}
+
+.footer-disclaimer p {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin: 0;
+}
+
+/* Token Detail Disclaimer */
+.token-disclaimer {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-left: 4px solid var(--status-warning);
+    border-radius: var(--radius-md);
+    padding: var(--space-md) var(--space-lg);
+    margin-bottom: var(--space-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.token-disclaimer p {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+    margin: 0;
+}
+
+.token-disclaimer .disclaimer-icon {
+    color: var(--status-warning);
+    margin-right: var(--space-xs);
+}
+
+/* Responsive Disclaimer */
+@media (max-width: 768px) {
+    .disclaimer-banner {
+        margin: var(--space-md);
+    }
+    
+    .disclaimer-header {
+        padding: var(--space-sm) var(--space-md);
+    }
+    
+    .disclaimer-content {
+        padding: var(--space-md);
+    }
+    
+    .disclaimer-content li {
+        font-size: 0.85rem;
+    }
+    
+    .footer-disclaimer p {
+        font-size: 0.8rem;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   24. Watchlist Styles
    -------------------------------------------------------------------------- */
 
 /* Watchlist Form */

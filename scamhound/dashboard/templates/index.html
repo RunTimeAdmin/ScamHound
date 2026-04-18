@@ -19,7 +19,7 @@
             <nav class="nav-links">
                 <a href="/" class="active">Dashboard</a>
                 <a href="/watchlist">Watchlist</a>
-                <a href="/settings">Settings</a>
+                <a href="/settings" id="settings-nav-link" style="display:none">Settings</a>
             </nav>
             <p class="tagline">Real-time rug pull detection for Bags.fm</p>
         </div>
@@ -48,6 +48,30 @@
             </div>
         </div>
     </header>
+
+    <!-- Disclaimer Banner -->
+    <div class="disclaimer-banner" id="disclaimer-banner">
+        <div class="disclaimer-header" onclick="toggleDisclaimer()">
+            <h3 class="disclaimer-title">
+                <span>⚠️</span>
+                <span>Important Disclaimer</span>
+            </h3>
+            <button class="disclaimer-toggle" aria-label="Toggle disclaimer">
+                <span class="chevron">▼</span>
+            </button>
+        </div>
+        <div class="disclaimer-content">
+            <h4>Risk Score Disclaimer</h4>
+            <p>ScamHound's risk scores are generated through automated analysis of on-chain data, token holder distribution, liquidity metrics, and AI-powered pattern recognition. These scores are intended as informational tools only and should not be considered financial advice.</p>
+            <ul>
+                <li><strong>Legitimate token structures may appear high-risk.</strong> Some tokens are intentionally designed with concentrated holdings for valid reasons such as project treasuries, marketing allocations, development funds, or founder vesting schedules. A high risk score does not necessarily indicate fraudulent intent.</li>
+                <li><strong>Always verify independently.</strong> Before making any decisions, review the token's official documentation, website, roadmap, and community channels to understand the intended token distribution and purpose.</li>
+                <li><strong>Scores reflect a point-in-time snapshot.</strong> Token metrics change rapidly. A score generated now may not reflect the token's current state.</li>
+                <li><strong>Not financial advice.</strong> ScamHound is a research and monitoring tool. Users are solely responsible for their own investment decisions. We do not recommend buying, selling, or holding any token.</li>
+            </ul>
+            <p class="disclaimer-footer">By using ScamHound, you acknowledge that automated risk analysis has inherent limitations and agree to conduct your own due diligence.</p>
+        </div>
+    </div>
 
     <!-- Prominent Auto-Scan Banner -->
     <div class="autoscan-banner" id="autoscan-banner">
@@ -181,6 +205,9 @@
         <div class="footer-content">
             <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a> (CCIE #14019)</p>
             <p>Real-time rug pull detection powered by AI. <a href="https://twitter.com/ScamHoundCrypto" target="_blank">@ScamHoundCrypto</a></p>
+        </div>
+        <div class="footer-disclaimer">
+            <p>ScamHound provides automated risk analysis for informational purposes only. Not financial advice. Always DYOR.</p>
         </div>
     </footer>
 
@@ -347,6 +374,25 @@
 
         // Load auto-scan status on page load
         loadAutoscanStatus();
+
+        // Disclaimer toggle functionality
+        function toggleDisclaimer() {
+            const banner = document.getElementById('disclaimer-banner');
+            banner.classList.toggle('collapsed');
+        }
+
+        // Check for admin token in URL and show settings link if present
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const adminToken = urlParams.get('token');
+            if (adminToken) {
+                const settingsLink = document.getElementById('settings-nav-link');
+                if (settingsLink) {
+                    settingsLink.style.display = 'inline';
+                    settingsLink.href = '/settings?token=' + encodeURIComponent(adminToken);
+                }
+            }
+        })();
 
         // WebSocket Real-time Updates
         (function() {

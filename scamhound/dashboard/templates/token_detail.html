@@ -20,7 +20,7 @@
             </div>
             <nav class="nav-links">
                 <a href="/">Dashboard</a>
-                <a href="/settings">Settings</a>
+                <a href="/settings" id="settings-nav-link" style="display:none">Settings</a>
             </nav>
         </div>
     </header>
@@ -41,6 +41,10 @@
                     {{ token.risk_level or 'UNKNOWN' }}
                 </span>
             </div>
+        </div>
+
+        <div class="token-disclaimer">
+            <p><span class="disclaimer-icon">⚠️</span>This score is for informational purposes only. Some token structures may appear high-risk for legitimate reasons (treasuries, marketing allocations, vesting). Always review the token's official documentation before making decisions.</p>
         </div>
 
         <div class="verdict-box risk-border-{{ token.risk_level.lower() if token.risk_level else 'unknown' }}">
@@ -188,5 +192,20 @@
             <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a></p>
         </div>
     </footer>
+
+    <script>
+        // Check for admin token in URL and show settings link if present
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const adminToken = urlParams.get('token');
+            if (adminToken) {
+                const settingsLink = document.getElementById('settings-nav-link');
+                if (settingsLink) {
+                    settingsLink.style.display = 'inline';
+                    settingsLink.href = '/settings?token=' + encodeURIComponent(adminToken);
+                }
+            }
+        })();
+    </script>
 </body>
 </html>

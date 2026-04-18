@@ -18,7 +18,7 @@
             <nav class="nav-links">
                 <a href="/">Dashboard</a>
                 <a href="/watchlist" class="active">Watchlist</a>
-                <a href="/settings">Settings</a>
+                <a href="/settings" id="settings-nav-link" style="display:none">Settings</a>
             </nav>
             <p class="tagline">Real-time rug pull detection for Bags.fm</p>
         </div>
@@ -289,6 +289,19 @@
                 addToWatchlist();
             }
         });
+
+        // Check for admin token in URL and show settings link if present
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const adminToken = urlParams.get('token');
+            if (adminToken) {
+                const settingsLink = document.getElementById('settings-nav-link');
+                if (settingsLink) {
+                    settingsLink.style.display = 'inline';
+                    settingsLink.href = '/settings?token=' + encodeURIComponent(adminToken);
+                }
+            }
+        })();
     </script>
 </body>
 </html>
