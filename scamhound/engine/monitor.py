@@ -15,6 +15,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from clients import bags_client
 from clients import helius_client
 from clients import birdeye_client
+from clients import bubblemaps_client
 from engine import database
 from engine import scorer
 from alerts import twitter_bot
@@ -175,6 +176,24 @@ def scan_single_token(token_mint: str, skip_if_scored: bool = True) -> Optional[
                 }
         except Exception as e:
             logger.warning(f"[SCAMHOUND] Could not get holder data for {token_mint[:8]}...: {e}")
+        
+        # Get BubbleMaps cluster analysis
+        try:
+            bubblemaps_data = bubblemaps_client.get_cluster_analysis(token_mint, chain="solana")
+            if bubblemaps_data:
+                token_data["bubblemaps"] = {
+                    "decentralization_score": bubblemaps_data.get("decentralization_score", 0),
+                    "cluster_count": bubblemaps_data.get("cluster_count", 0),
+                    "largest_cluster_share": bubblemaps_data.get("largest_cluster_share", 0),
+                    "risk_signal": bubblemaps_data.get("risk_signal", "UNKNOWN")
+                }
+                logger.info(f"[SCAMHOUND] BubbleMaps analysis for {token_mint[:8]}...: "
+                           f"decentralization={bubblemaps_data.get('decentralization_score')}, "
+                           f"clusters={bubblemaps_data.get('cluster_count')}")
+            else:
+                logger.warning(f"[SCAMHOUND] No BubbleMaps data for {token_mint[:8]}...")
+        except Exception as e:
+            logger.warning(f"[SCAMHOUND] Could not get BubbleMaps data for {token_mint[:8]}...: {e}")
         
         # Get creator wallet
         creator_wallet = token_data.get("creator", {}).get("wallet")
@@ -371,6 +390,30 @@ def run_cycle() -> None:
                     }
             except Exception as e:
                 logger.warning(f"[SCAMHOUND] Error getting holder data: {e}")
+            
+            # Get BubbleMaps cluster analysis
+            try:
+                bubblemaps_data = bubblemaps_client.get_cluster_analysis(
+                    token_mint, chain="solana"
+                )
+                if bubblemaps_data:
+                    token_data["bubblemaps"] = {
+                        "decentralization_score": bubblemaps_data.get(
+                            "decentralization_score", 0
+                        ),
+                        "cluster_count": bubblemaps_data.get("cluster_count", 0),
+                        "largest_cluster_share": bubblemaps_data.get(
+                            "largest_cluster_share", 0
+                        ),
+                        "risk_signal": bubblemaps_data.get("risk_signal", "UNKNOWN")
+                    }
+                    logger.info(
+                        f"[SCAMHOUND] BubbleMaps for {token_symbol}: "
+                        f"decentralization={bubblemaps_data.get('decentralization_score')}, "
+                        f"clusters={bubblemaps_data.get('cluster_count')}"
+                    )
+            except Exception as e:
+                logger.warning(f"[SCAMHOUND] Error getting BubbleMaps data: {e}")
             
             # Get creator wallet
             creator_wallet = token_data.get("creator", {}).get("wallet")

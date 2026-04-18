@@ -54,6 +54,8 @@ Key risk factors to weigh heavily (adjusted for token age):
 - Wash trading score >0.7 = critical, >0.5 = high
 - Large sell pressure = high
 - Creator royalty >5% = medium concern
+- BubbleMaps decentralization score <30 = critical, <50 = high (indicates centralized control)
+- BubbleMaps largest cluster share >70% = critical, >50% = high (possible coordinated wallets)
 
 For very new tokens (< 10 min), focus your analysis on:
 1. Creator wallet history - has this wallet launched before? Any abandoned tokens?
@@ -118,6 +120,13 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     large_sell = token_data.get("large_sell_pressure", False)
     lifetime_fees = token_data.get("lifetime_fees_sol", 0)
     
+    # BubbleMaps data
+    bubblemaps = token_data.get("bubblemaps", {})
+    decentralization_score = bubblemaps.get("decentralization_score", 0)
+    cluster_count = bubblemaps.get("cluster_count", 0)
+    largest_cluster_share = bubblemaps.get("largest_cluster_share", 0)
+    bubblemaps_risk_signal = bubblemaps.get("risk_signal", "NOT_AVAILABLE")
+    
     # Format age string
     if token_age_minutes is not None:
         if token_age_minutes < 60:
@@ -161,6 +170,12 @@ ON-CHAIN CREATOR HISTORY (Helius):
 
 HOLDER CLUSTERING ANALYSIS:
 - Clustering score (0.0-1.0): {clustering_score} {("(HIGH CLUSTERING - SUSPICIOUS)" if clustering_score > 0.4 else "")}
+
+BUBBLEMAPS ANALYSIS (Token Holder Clustering):
+- Decentralization Score (0-100, higher = better): {decentralization_score} {("(CENTRALIZED - HIGH RISK)" if decentralization_score < 30 else "(MODERATE RISK)" if decentralization_score < 50 else "")}
+- Number of clusters detected: {cluster_count}
+- Largest cluster share: {largest_cluster_share}% {("(HIGHLY CENTRALIZED)" if largest_cluster_share > 70 else "(MODERATE CONCERN)" if largest_cluster_share > 50 else "")}
+- BubbleMaps risk signal: {bubblemaps_risk_signal}
 
 MARKET DATA (Birdeye):
 - Liquidity (USD): ${liquidity_usd:,.2f}
