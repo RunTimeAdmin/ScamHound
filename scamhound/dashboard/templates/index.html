@@ -47,7 +47,27 @@
         <!-- Manual Scan Section -->
         <div class="scan-section">
             <div class="scan-box">
-                <h3>Scan Token</h3>
+                <div class="scan-header">
+                    <h3>Scan Token</h3>
+                    <div class="scan-actions">
+                        <!-- Export Buttons -->
+                        <div class="export-buttons">
+                            <a href="/api/export/csv" class="export-btn export-csv" title="Export CSV">
+                                <span>📥</span> Export CSV
+                            </a>
+                            <a href="/api/export/pdf" class="export-btn export-pdf" title="Export PDF">
+                                <span>📥</span> Export PDF
+                            </a>
+                        </div>
+                        <!-- Auto-Scan Toggle -->
+                        <div class="autoscan-control">
+                            <span id="autoscan-status-text" class="autoscan-status">Auto-Scan: OFF</span>
+                            <button id="autoscan-toggle" class="autoscan-toggle" onclick="toggleAutoscan()">
+                                <span class="autoscan-slider"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
                 <div class="scan-input-group">
                     <input 
                         type="text" 
@@ -239,6 +259,72 @@
                 scanToken();
             }
         });
+
+        // Auto-scan toggle functionality
+        let autoscanToggling = false;
+
+        async function loadAutoscanStatus() {
+            try {
+                const response = await fetch('/api/autoscan/status');
+                const data = await response.json();
+                updateAutoscanUI(data.enabled, data.interval);
+            } catch (e) {
+                console.error('Failed to load auto-scan status:', e);
+            }
+        }
+
+        function updateAutoscanUI(enabled, interval) {
+            const toggleBtn = document.getElementById('autoscan-toggle');
+            const statusText = document.getElementById('autoscan-status-text');
+
+            if (enabled) {
+                toggleBtn.classList.add('enabled');
+                statusText.textContent = `Auto-Scan: ON (${interval}s interval)`;
+                statusText.classList.add('enabled');
+            } else {
+                toggleBtn.classList.remove('enabled');
+                statusText.textContent = 'Auto-Scan: OFF';
+                statusText.classList.remove('enabled');
+            }
+        }
+
+        async function toggleAutoscan() {
+            if (autoscanToggling) return; // Prevent double-clicks
+
+            autoscanToggling = true;
+            const toggleBtn = document.getElementById('autoscan-toggle');
+            toggleBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/autoscan/toggle', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    updateAutoscanUI(data.enabled, data.interval);
+                    showToast(
+                        data.enabled ? 'Auto-scan enabled' : 'Auto-scan disabled',
+                        'success'
+                    );
+                } else {
+                    showToast('Failed to toggle auto-scan', 'error');
+                }
+            } catch (e) {
+                console.error('Toggle auto-scan error:', e);
+                showToast('Network error. Please try again.', 'error');
+            } finally {
+                toggleBtn.disabled = false;
+                autoscanToggling = false;
+            }
+        }
+
+        // Load auto-scan status on page load
+        loadAutoscanStatus();
     </script>
 </body>
 </html>

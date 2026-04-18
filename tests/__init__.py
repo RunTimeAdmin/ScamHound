@@ -1,0 +1,1 @@
+# ScamHound test package

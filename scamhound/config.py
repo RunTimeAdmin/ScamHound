@@ -32,6 +32,7 @@ CONFIG_KEYS = [
     "TWITTER_BEARER_TOKEN",
     "RISK_ALERT_THRESHOLD",
     "POLL_INTERVAL_SECONDS",
+    "SCAMHOUND_ADMIN_TOKEN",
 ]
 
 # Default values for non-sensitive settings

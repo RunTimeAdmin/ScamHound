@@ -281,11 +281,68 @@ footer {
     box-shadow: var(--shadow-md);
 }
 
-.scan-box h3 {
+.scan-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-md);
+}
+
+.scan-header h3 {
     font-size: 1.1rem;
     font-weight: 600;
-    margin-bottom: var(--space-md);
     color: var(--text-primary);
+    margin: 0;
+}
+
+.scan-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+/* Export Buttons */
+.export-buttons {
+    display: flex;
+    gap: var(--space-sm);
+}
+
+.export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.export-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-primary);
+    color: var(--text-primary);
+    text-decoration: none;
+    transform: translateY(-1px);
+}
+
+.export-btn span {
+    font-size: 0.9rem;
+}
+
+.export-csv:hover {
+    border-color: var(--risk-low);
+    color: var(--risk-low);
+}
+
+.export-pdf:hover {
+    border-color: var(--risk-critical);
+    color: var(--risk-critical);
 }
 
 .scan-input-group {
@@ -369,6 +426,27 @@ footer {
 
 /* Responsive scan section */
 @media (max-width: 768px) {
+    .scan-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-sm);
+    }
+    
+    .scan-actions {
+        flex-direction: column;
+        align-items: flex-start;
+        width: 100%;
+    }
+    
+    .export-buttons {
+        width: 100%;
+    }
+    
+    .export-btn {
+        flex: 1;
+        justify-content: center;
+    }
+    
     .scan-input-group {
         flex-direction: column;
     }
@@ -376,6 +454,69 @@ footer {
     .scan-button {
         width: 100%;
     }
+}
+
+/* --------------------------------------------------------------------------
+   Auto-Scan Toggle Styles
+   -------------------------------------------------------------------------- */
+
+.autoscan-control {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.autoscan-status {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    transition: color var(--transition-fast);
+}
+
+.autoscan-status.enabled {
+    color: var(--risk-low);
+}
+
+.autoscan-toggle {
+    position: relative;
+    width: 48px;
+    height: 24px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    padding: 0;
+    transition: all var(--transition-fast);
+}
+
+.autoscan-toggle:hover:not(:disabled) {
+    border-color: var(--border-primary);
+}
+
+.autoscan-toggle:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.autoscan-toggle.enabled {
+    background: var(--risk-low);
+    border-color: var(--risk-low);
+}
+
+.autoscan-slider {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: var(--text-primary);
+    border-radius: var(--radius-full);
+    transition: transform var(--transition-fast);
+    box-shadow: var(--shadow-sm);
+}
+
+.autoscan-toggle.enabled .autoscan-slider {
+    transform: translateX(24px);
 }
 
 /* --------------------------------------------------------------------------
