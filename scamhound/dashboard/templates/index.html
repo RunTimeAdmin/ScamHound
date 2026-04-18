@@ -457,7 +457,8 @@
             }
             
             function connect() {
-                const wsUrl = `ws://${window.location.host}/ws/scores`;
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${wsProtocol}//${window.location.host}/ws/scores`;
                 
                 try {
                     ws = new WebSocket(wsUrl);
