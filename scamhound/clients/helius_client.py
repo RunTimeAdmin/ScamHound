@@ -10,6 +10,8 @@ import logging
 from datetime import datetime, timezone
 from collections import Counter
 
+from .retry import request_with_retry
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,9 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
     params["api-key"] = api_key
     
     try:
-        response = requests.get(url, params=params, timeout=30)
+        response = request_with_retry(
+            requests.get, url, params=params, timeout=30
+        )
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -240,12 +244,9 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
     }
     
     try:
-        response = requests.post(url, json=payload, timeout=30)
-        
-        # Handle rate limiting
-        if response.status_code == 429:
-            logger.warning("[HELIUS] Rate limited (429). Backing off...")
-            return None
+        response = request_with_retry(
+            requests.post, url, json=payload, timeout=30
+        )
         
         response.raise_for_status()
         data = response.json()
@@ -268,7 +269,9 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
             "params": [token_mint]
         }
         
-        supply_response = requests.post(url, json=supply_payload, timeout=30)
+        supply_response = request_with_retry(
+            requests.post, url, json=supply_payload, timeout=30
+        )
         supply_response.raise_for_status()
         supply_data = supply_response.json()
         

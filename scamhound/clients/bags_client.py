@@ -8,6 +8,8 @@ import requests
 from typing import Optional, Dict, List, Any
 import logging
 
+from .retry import request_with_retry
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,9 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
     headers = {"x-api-key": api_key, "Content-Type": "application/json"}
     
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response = request_with_retry(
+            requests.get, url, headers=headers, params=params, timeout=30
+        )
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:

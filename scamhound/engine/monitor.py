@@ -4,9 +4,9 @@ Main polling loop that coordinates all analysis
 """
 
 import os
-import time
 import logging
 import asyncio
+from collections import OrderedDict
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime, timezone
 
@@ -29,8 +29,25 @@ POLL_INTERVAL = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
 RISK_THRESHOLD = int(os.getenv("RISK_ALERT_THRESHOLD", "65"))
 MIN_TOKEN_AGE_MINUTES = int(os.getenv("MIN_TOKEN_AGE_MINUTES", "0"))  # Skip tokens younger than this
 
-# Track processed tokens to avoid duplicates in memory
-processed_tokens = set()
+# Capped LRU-style processed tokens tracker (max 500 entries)
+_processed_tokens = OrderedDict()
+_PROCESSED_MAX = 500
+
+
+def _mark_processed(token_mint):
+    """Mark a token as processed, evicting oldest if at capacity."""
+    if token_mint in _processed_tokens:
+        _processed_tokens.move_to_end(token_mint)
+    else:
+        _processed_tokens[token_mint] = True
+        if len(_processed_tokens) > _PROCESSED_MAX:
+            _processed_tokens.popitem(last=False)
+
+
+def _is_processed(token_mint):
+    """Check if a token has been processed."""
+    return token_mint in _processed_tokens
+
 
 # Callback for broadcasting new scores via WebSocket
 _new_score_callback: Optional[Callable[[dict], None]] = None
@@ -280,6 +297,11 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         logger.info(f"[SCAMHOUND] Token {token_mint[:8]}... already scored, skipping")
         return database.get_token_score(token_mint)
     
+    # Check if scored recently (within last hour) to prevent duplicates
+    if database.was_recently_scored(token_mint, hours=1):
+        logger.info(f"[SCAMHOUND] Token {token_mint[:8]}... scored within last hour, skipping")
+        return database.get_token_score(token_mint)
+    
     try:
         # Build token profile
         token_data = {
@@ -405,7 +427,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         database.save_score(score_result)
         
         # Mark as processed
-        processed_tokens.add(token_mint)
+        _mark_processed(token_mint)
         
         # Notify WebSocket clients
         _notify_new_score(score_result)
@@ -458,6 +480,11 @@ def _scan_single_token_sync_fallback(token_mint: str, skip_if_scored: bool = Tru
     # Check if already scored
     if skip_if_scored and database.token_already_scored(token_mint):
         logger.info(f"[SCAMHOUND] Token {token_mint[:8]}... already scored, skipping")
+        return database.get_token_score(token_mint)
+    
+    # Check if scored recently (within last hour) to prevent duplicates
+    if database.was_recently_scored(token_mint, hours=1):
+        logger.info(f"[SCAMHOUND] Token {token_mint[:8]}... scored within last hour, skipping")
         return database.get_token_score(token_mint)
     
     try:
@@ -596,7 +623,7 @@ def _scan_single_token_sync_fallback(token_mint: str, skip_if_scored: bool = Tru
         database.save_score(score_result)
         
         # Mark as processed
-        processed_tokens.add(token_mint)
+        _mark_processed(token_mint)
         
         # Log result
         logger.info(
@@ -612,18 +639,74 @@ def _scan_single_token_sync_fallback(token_mint: str, skip_if_scored: bool = Tru
         return None
 
 
+async def _run_cycle_async(tokens: list) -> None:
+    """
+    Async implementation of the scan loop for fetched tokens.
+    
+    Processes tokens sequentially via scan_single_token_async(),
+    which internally parallelizes the API calls for each individual token.
+    """
+    new_tokens_processed = 0
+    skipped_already_scored = 0
+    skipped_no_mint = 0
+    
+    for token in tokens:
+        # Try multiple possible field names for token mint
+        token_mint = (token.get("tokenMint") or 
+                     token.get("mint") or 
+                     token.get("token_mint") or
+                     token.get("address"))
+        
+        if not token_mint:
+            skipped_no_mint += 1
+            logger.debug(f"[SCAMHOUND] Skipping token with no mint: {token}")
+            continue
+        
+        # Skip if already processed
+        if _is_processed(token_mint):
+            skipped_already_scored += 1
+            continue
+        
+        if database.token_already_scored(token_mint):
+            _mark_processed(token_mint)
+            skipped_already_scored += 1
+            continue
+        
+        # Check if scored recently (within last hour) to prevent duplicates
+        if database.was_recently_scored(token_mint, hours=1):
+            logger.info(
+                f"[SCAMHOUND] Token {token_mint[:8]}... "
+                "scored within last hour, skipping"
+            )
+            _mark_processed(token_mint)
+            skipped_already_scored += 1
+            continue
+        
+        # Delegate to the async scan path (parallel API calls per token)
+        result = await scan_single_token_async(
+            token_mint=token_mint, skip_if_scored=False
+        )
+        
+        if result is not None:
+            new_tokens_processed += 1
+        
+        # Small delay between tokens to avoid rate limits
+        await asyncio.sleep(1)
+    
+    logger.info(
+        f"[SCAMHOUND] Cycle complete. Processed: {new_tokens_processed}, "
+        f"Skipped (already scored): {skipped_already_scored}, "
+        f"Skipped (no mint): {skipped_no_mint}"
+    )
+
+
 def run_cycle() -> None:
     """
     Execute one full monitoring cycle.
     
     1. Get recent launches from Bags.fm
-    2. For each new token:
-       - Get full profile from Bags API
-       - Analyze creator wallet via Helius
-       - Check holder clustering via Helius
-       - Get market data via Birdeye
-       - Score with Claude
-       - Save to database
+    2. For each new token, delegate to scan_single_token_async()
+       which parallelizes API calls per token.
     3. Trigger Twitter alerts for high-risk tokens
     """
     logger.info("[SCAMHOUND] Starting monitor cycle...")
@@ -638,202 +721,14 @@ def run_cycle() -> None:
         
         logger.info(f"[SCAMHOUND] Got {len(recent_tokens)} tokens from Bags feed")
         
-        new_tokens_processed = 0
-        skipped_already_scored = 0
-        skipped_no_mint = 0
-        
-        for token in recent_tokens:
-            # Try multiple possible field names for token mint
-            token_mint = (token.get("tokenMint") or 
-                         token.get("mint") or 
-                         token.get("token_mint") or
-                         token.get("address"))
-            
-            if not token_mint:
-                skipped_no_mint += 1
-                logger.debug(f"[SCAMHOUND] Skipping token with no mint: {token}")
-                continue
-            
-            # Skip if already processed
-            if token_mint in processed_tokens:
-                skipped_already_scored += 1
-                continue
-            
-            if database.token_already_scored(token_mint):
-                processed_tokens.add(token_mint)
-                skipped_already_scored += 1
-                continue
-            
-            # Get token name/symbol with multiple fallback field names
-            token_name = (token.get("name") or 
-                         token.get("tokenName") or 
-                         token.get("token_name", "Unknown"))
-            token_symbol = (token.get("symbol") or 
-                           token.get("tokenSymbol") or 
-                           token.get("token_symbol", "UNKNOWN"))
-            
-            logger.info(f"[SCAMHOUND] Processing new token: {token_symbol} ({token_mint[:8]}...)")
-            
-            # Build token profile
-            token_data = {
-                "token_mint": token_mint,
-                "name": token_name,
-                "symbol": token_symbol,
-                "created_at": (token.get("createdAt") or 
-                              token.get("created_at") or 
-                              token.get("createdTime") or
-                              datetime.utcnow().isoformat())
-            }
-            
-            # Get Bags profile
-            try:
-                bags_profile = bags_client.get_full_token_profile(token_mint)
-                if bags_profile:
-                    token_data.update(bags_profile)
-                    # Override with the token info we already have if Bags doesn't have it
-                    if not token_data.get("name"):
-                        token_data["name"] = token_name
-                    if not token_data.get("symbol"):
-                        token_data["symbol"] = token_symbol
-            except Exception as e:
-                logger.warning(f"[SCAMHOUND] Error getting Bags profile: {e}")
-            
-            # Calculate token age and status
-            token_data["token_age_minutes"] = _calculate_token_age_minutes(
-                token_data.get("created_at")
-            )
-            token_data["token_status"] = _get_token_status(token_data)
-            
-            # Check minimum age filter
-            age_minutes = token_data.get("token_age_minutes")
-            if age_minutes is not None and MIN_TOKEN_AGE_MINUTES > 0:
-                if age_minutes < MIN_TOKEN_AGE_MINUTES:
-                    logger.info(
-                        f"[SCAMHOUND] {token_symbol} skipped: "
-                        f"age {age_minutes}m < minimum {MIN_TOKEN_AGE_MINUTES}m"
-                    )
-                    processed_tokens.add(token_mint)
-                    continue
-            
-            # Get holder data from Helius (supplements Bags data)
-            try:
-                holder_data = helius_client.get_token_holders(token_mint)
-                if holder_data:
-                    token_data["holders"] = {
-                        "top_holders": holder_data.get("top_holders", []),
-                        "top_10_concentration_pct": holder_data.get("top10_pct", 0),
-                        "total_holder_count": holder_data.get("total_holders", 0),
-                        "concentration_score": holder_data.get("concentration_score", "unknown"),
-                        "top1_pct": holder_data.get("top1_pct", 0),
-                        "top5_pct": holder_data.get("top5_pct", 0)
-                    }
-            except Exception as e:
-                logger.warning(f"[SCAMHOUND] Error getting holder data: {e}")
-            
-            # Get BubbleMaps cluster analysis
-            try:
-                bubblemaps_data = bubblemaps_client.get_cluster_analysis(
-                    token_mint, chain="solana"
-                )
-                if bubblemaps_data:
-                    token_data["bubblemaps"] = {
-                        "decentralization_score": bubblemaps_data.get(
-                            "decentralization_score", 0
-                        ),
-                        "cluster_count": bubblemaps_data.get("cluster_count", 0),
-                        "largest_cluster_share": bubblemaps_data.get(
-                            "largest_cluster_share", 0
-                        ),
-                        "risk_signal": bubblemaps_data.get("risk_signal", "UNKNOWN")
-                    }
-                    logger.info(
-                        f"[SCAMHOUND] BubbleMaps for {token_symbol}: "
-                        f"decentralization={bubblemaps_data.get('decentralization_score')}, "
-                        f"clusters={bubblemaps_data.get('cluster_count')}"
-                    )
-            except Exception as e:
-                logger.warning(f"[SCAMHOUND] Error getting BubbleMaps data: {e}")
-            
-            # Get creator wallet
-            creator_wallet = token_data.get("creator", {}).get("wallet")
-            
-            # Check if creator wallet is on watchlist
-            if creator_wallet and database.is_watched_wallet(creator_wallet):
-                database.update_watchlist_seen(creator_wallet)
-                logger.info(
-                    f"[SCAMHOUND] Watched wallet detected: {creator_wallet[:8]}..."
-                )
-            
-            if creator_wallet:
-                try:
-                    # Analyze creator wallet
-                    creator_analysis = helius_client.analyze_creator_wallet(creator_wallet)
-                    token_data["wallet_age_days"] = creator_analysis.get("wallet_age_days", -1)
-                    token_data["prior_launch_count"] = creator_analysis.get("prior_launch_count", 0)
-                    token_data["abandoned_tokens"] = creator_analysis.get("abandoned_tokens", [])
-                    token_data["days_since_last_launch"] = creator_analysis.get("days_since_last_launch")
-                    
-                    # Check holder clustering using Helius holder data
-                    holder_wallets = [
-                        h.get("address") for h in token_data.get("holders", {}).get("top_holders", [])
-                        if h.get("address")
-                    ]
-                    
-                    if holder_wallets:
-                        clustering = helius_client.check_wallet_clustering(holder_wallets)
-                        token_data["clustering_score"] = clustering.get("clustering_score", 0)
-                        token_data["clustered_wallets"] = clustering.get("clustered_wallets", 0)
-                except Exception as e:
-                    logger.warning(f"[SCAMHOUND] Error analyzing creator: {e}")
-            
-            # Get market data
-            try:
-                market_data = birdeye_client.get_full_market_data(token_mint)
-                if market_data:
-                    overview = market_data.get("overview", {})
-                    liquidity = market_data.get("liquidity", {})
-                    trades = market_data.get("trades", {})
-                    
-                    token_data["liquidity_usd"] = liquidity.get("liquidity_usd", 0)
-                    token_data["liquidity_to_mcap_ratio"] = liquidity.get("liquidity_to_mcap_ratio", 0)
-                    token_data["unique_trader_count"] = trades.get("unique_trader_count", 0)
-                    token_data["wash_trading_score"] = trades.get("wash_trading_score", 0)
-                    token_data["large_sell_pressure"] = trades.get("large_sell_pressure", False)
-            except Exception as e:
-                logger.warning(f"[SCAMHOUND] Error getting market data: {e}")
-            
-            # Calculate risk score
-            try:
-                score_result = scorer.calculate_risk_score(token_data)
-                
-                # Save to database
-                database.save_score(score_result)
-                
-                # Mark as processed
-                processed_tokens.add(token_mint)
-                new_tokens_processed += 1
-                
-                # Notify WebSocket clients
-                _notify_new_score(score_result)
-                
-                # Log result
-                logger.info(
-                    f"[SCAMHOUND] {score_result.get('symbol', '???')} | "
-                    f"Score: {score_result.get('risk_score', 0)} | "
-                    f"{score_result.get('risk_level', 'UNKNOWN')} | "
-                    f"{score_result.get('verdict', '')[:50]}..."
-                )
-            except Exception as e:
-                logger.error(f"[SCAMHOUND] Error scoring token: {e}")
-            
-            # Small delay between tokens to avoid rate limits
-            time.sleep(1)
-        
-        logger.info(
-            f"[SCAMHOUND] Cycle complete. Processed: {new_tokens_processed}, "
-            f"Skipped (already scored): {skipped_already_scored}, "
-            f"Skipped (no mint): {skipped_no_mint}"
-        )
+        # Run the async scan loop in a new event loop
+        # (APScheduler calls run_cycle from a thread)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_run_cycle_async(recent_tokens))
+        finally:
+            loop.close()
         
         # Trigger Twitter alerts for high-risk tokens
         try:

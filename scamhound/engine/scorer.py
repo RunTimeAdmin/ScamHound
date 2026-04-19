@@ -3,7 +3,6 @@ ScamHound Scoring Engine
 Uses Claude AI to analyze token data and generate risk scores
 """
 
-import os
 import json
 import logging
 from typing import Dict, Any, Optional
@@ -13,6 +12,21 @@ import anthropic
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Anthropic client singleton
+_anthropic_client = None
+_anthropic_client_key = None
+
+
+def _get_anthropic_client():
+    """Get or create Anthropic client singleton."""
+    global _anthropic_client, _anthropic_client_key
+    from config import get_config
+    key = get_config("ANTHROPIC_API_KEY")
+    if key and (key != _anthropic_client_key or _anthropic_client is None):
+        _anthropic_client = anthropic.Anthropic(api_key=key)
+        _anthropic_client_key = key
+    return _anthropic_client
 
 
 
@@ -122,6 +136,7 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     
     # BubbleMaps data
     bubblemaps = token_data.get("bubblemaps", {})
+    has_bubblemaps_data = bubblemaps and bubblemaps.get("decentralization_score") is not None
     decentralization_score = bubblemaps.get("decentralization_score", 0)
     cluster_count = bubblemaps.get("cluster_count", 0)
     largest_cluster_share = bubblemaps.get("largest_cluster_share", 0)
@@ -171,7 +186,7 @@ ON-CHAIN CREATOR HISTORY (Helius):
 HOLDER CLUSTERING ANALYSIS:
 - Clustering score (0.0-1.0): {clustering_score} {("(HIGH CLUSTERING - SUSPICIOUS)" if clustering_score > 0.4 else "")}
 
-BUBBLEMAPS ANALYSIS (Token Holder Clustering):
+BUBBLEMAPS ANALYSIS (Token Holder Clustering):{f"\nNOTE: BubbleMaps cluster analysis data is UNAVAILABLE for this token. Scoring should rely on Helius holder data, Birdeye market data, and Bags.fm metadata only. Do not penalize or reward the absence of BubbleMaps data." if not has_bubblemaps_data else ""}
 - Decentralization Score (0-100, higher = better): {decentralization_score} {("(CENTRALIZED - HIGH RISK)" if decentralization_score < 30 else "(MODERATE RISK)" if decentralization_score < 50 else "")}
 - Number of clusters detected: {cluster_count}
 - Largest cluster share: {largest_cluster_share}% {("(HIGHLY CENTRALIZED)" if largest_cluster_share > 70 else "(MODERATE CONCERN)" if largest_cluster_share > 50 else "")}
@@ -193,11 +208,10 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
     
     Returns a complete score dict with all fields needed for database.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
+    client = _get_anthropic_client()
+    if not client:
         logger.error("[SCAMHOUND] Anthropic API key not configured")
         return _fallback_score(token_data, "API key not configured")
-    client = anthropic.Anthropic(api_key=api_key)
     
     user_prompt = build_user_prompt(token_data)
     
@@ -244,7 +258,8 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
             "token_age_minutes": token_data.get("token_age_minutes"),
             "token_status": token_data.get("token_status", "unknown"),
             "scored_at": datetime.utcnow().isoformat(),
-            "created_at": token_data.get("created_at")
+            "created_at": token_data.get("created_at"),
+            "score_source": "ai"
         }
         
         logger.info(f"[SCAMHOUND] {score_data['symbol']} | Score: {score_data['risk_score']} | {score_data['risk_level']}")
@@ -284,5 +299,6 @@ def _fallback_score(token_data: Dict[str, Any], reason: str) -> Dict[str, Any]:
         "token_age_minutes": token_data.get("token_age_minutes"),
         "token_status": token_data.get("token_status", "unknown"),
         "scored_at": datetime.utcnow().isoformat(),
-        "created_at": token_data.get("created_at")
+        "created_at": token_data.get("created_at"),
+        "score_source": "fallback"
     }

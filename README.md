@@ -299,7 +299,7 @@ ScamHound/
 
 ### V2 Planned Features
 
-- [ ] **Twitter Bot Alerts** — Automated high-risk token alerts to @ScamHoundCrypto
+- [ ] **Twitter/X Alerts (V2 - Framework Ready)** — The alert framework (`alerts/twitter_bot.py`) is included but not active in V1. It will be wired into the scoring pipeline in V2 to post automated risk alerts via @ScamHoundCrypto
 - [ ] **Multi-Platform Support** — Extend beyond Bags.fm to other Solana launchpads
 - [ ] **Historical Trending** — Track risk scores over time for pattern analysis
 - [ ] **Webhook Notifications** — Custom alert endpoints for integrations

@@ -5,6 +5,7 @@ SQLite persistence for token scores and alert tracking
 
 import sqlite3
 import os
+import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -15,6 +16,8 @@ def get_connection() -> sqlite3.Connection:
     """Get a database connection with row factory enabled."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -61,6 +64,19 @@ def init_db() -> None:
     """)
     
     conn.commit()
+    
+    # Add score_source column if not exists
+    try:
+        cursor.execute("ALTER TABLE scored_tokens ADD COLUMN score_source TEXT DEFAULT 'ai'")
+    except Exception:
+        pass  # Column already exists
+    
+    # Create indexes for common queries
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_creator_wallet ON scored_tokens(creator_wallet)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_score ON scored_tokens(risk_score)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_token_mint ON scored_tokens(token_mint)")
+    
+    conn.commit()
     conn.close()
     print("[SCAMHOUND] Database initialized")
 
@@ -81,23 +97,45 @@ def token_already_scored(token_mint: str) -> bool:
     return result is not None
 
 
-def save_score(score_data: Dict[str, Any]) -> None:
+def was_recently_scored(token_mint: str, hours: int = 1) -> bool:
+    """Check if a token was scored within the last N hours."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        """
+        SELECT 1 FROM scored_tokens 
+        WHERE token_mint = ? 
+        AND scored_at >= datetime('now', '-{} hours')
+        """.format(hours),
+        (token_mint,)
+    )
+    
+    result = cursor.fetchone()
+    conn.close()
+    
+    return result is not None
+
+
+def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
     """Insert a new token score into the database."""
     conn = get_connection()
     cursor = conn.cursor()
     
     # Convert lists to JSON strings for storage
-    import json
     risk_factors = json.dumps(score_data.get("top_risk_factors", []))
     safe_signals = json.dumps(score_data.get("top_safe_signals", []))
+    
+    # Get score_source from score_data if available, otherwise use parameter
+    source = score_data.get("score_source", score_source)
     
     cursor.execute("""
         INSERT OR REPLACE INTO scored_tokens (
             token_mint, name, symbol, risk_score, risk_level, ai_verdict,
             top_risk_factors, top_safe_signals, top_10_concentration,
             creator_wallet, creator_username, prior_launches, wallet_age_days,
-            clustering_score, liquidity_usd, lifetime_fees_sol, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            clustering_score, liquidity_usd, lifetime_fees_sol, created_at, score_source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         score_data.get("token_mint"),
         score_data.get("name"),
@@ -115,7 +153,8 @@ def save_score(score_data: Dict[str, Any]) -> None:
         score_data.get("clustering_score"),
         score_data.get("liquidity_usd"),
         score_data.get("lifetime_fees_sol"),
-        score_data.get("created_at")
+        score_data.get("created_at"),
+        source
     ))
     
     conn.commit()
@@ -136,7 +175,6 @@ def get_recent_scores(limit: int = 50) -> List[Dict[str, Any]]:
     rows = cursor.fetchall()
     conn.close()
     
-    import json
     results = []
     for row in rows:
         result = dict(row)
@@ -164,7 +202,6 @@ def get_token_score(token_mint: str) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
     
-    import json
     result = dict(row)
     result["top_risk_factors"] = json.loads(result.get("top_risk_factors", "[]"))
     result["top_safe_signals"] = json.loads(result.get("top_safe_signals", "[]"))
@@ -186,7 +223,6 @@ def get_high_risk_unnotified(threshold: int = 65) -> List[Dict[str, Any]]:
     rows = cursor.fetchall()
     conn.close()
     
-    import json
     results = []
     for row in rows:
         result = dict(row)

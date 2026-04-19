@@ -10,6 +10,8 @@ from typing import Optional, Dict, List, Any
 import logging
 from collections import Counter
 
+from .retry import request_with_retry
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -47,37 +49,16 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
     if elapsed < _MIN_DELAY_SECONDS:
         time.sleep(_MIN_DELAY_SECONDS - elapsed)
     
-    # Retry logic with exponential backoff
-    max_retries = 3
-    base_delay = 1.0  # Start with 1 second
-    
-    for attempt in range(max_retries):
-        try:
-            _last_request_time = time.time()
-            response = requests.get(url, headers=headers, params=params, timeout=30)
-            
-            # Handle rate limiting (429)
-            if response.status_code == 429:
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)  # 1s, 2s, 4s
-                    logger.warning(
-                        f"[BIRDEYE] Rate limited on {endpoint}, "
-                        f"retrying in {delay}s (attempt {attempt + 1}/{max_retries})"
-                    )
-                    time.sleep(delay)
-                    continue
-                else:
-                    logger.error(f"[BIRDEYE] Rate limited on {endpoint}, max retries exceeded")
-                    return None
-            
-            response.raise_for_status()
-            return response.json()
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"[BIRDEYE] API error on {endpoint}: {e}")
-            return None
-    
-    return None
+    try:
+        _last_request_time = time.time()
+        response = request_with_retry(
+            requests.get, url, headers=headers, params=params, timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[BIRDEYE] API error on {endpoint}: {e}")
+        return None
 
 
 def get_token_overview(token_mint: str) -> Optional[Dict[str, Any]]:

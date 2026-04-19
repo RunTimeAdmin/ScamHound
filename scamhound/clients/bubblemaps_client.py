@@ -5,8 +5,11 @@ Token holder clustering and decentralization analysis
 
 import os
 import requests
+from collections import deque
 from typing import Optional, Dict, List
 import logging
+
+from .retry import request_with_retry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,7 +39,9 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
     url = f"{BASE_URL}{endpoint}"
     
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=60)
+        response = request_with_retry(
+            requests.get, url, headers=headers, params=params, timeout=60
+        )
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -123,11 +128,11 @@ def get_cluster_analysis(token_address: str, chain: str = "solana") -> Optional[
             if node_id not in visited:
                 # BFS to find all nodes in this cluster
                 cluster_nodes = []
-                queue = [node_id]
+                queue = deque([node_id])
                 visited.add(node_id)
                 
                 while queue:
-                    current = queue.pop(0)
+                    current = queue.popleft()
                     # Find node data
                     node_data = next((n for n in nodes if n.get("id") == current), None)
                     if node_data:
