@@ -190,6 +190,7 @@ BUBBLEMAPS ANALYSIS (Token Holder Clustering):{f"\nNOTE: BubbleMaps cluster anal
 - Decentralization Score (0-100, higher = better): {decentralization_score} {("(CENTRALIZED - HIGH RISK)" if decentralization_score < 30 else "(MODERATE RISK)" if decentralization_score < 50 else "")}
 - Number of clusters detected: {cluster_count}
 - Largest cluster share: {largest_cluster_share}% {("(HIGHLY CENTRALIZED)" if largest_cluster_share > 70 else "(MODERATE CONCERN)" if largest_cluster_share > 50 else "")}
+- Note: Decentralization score uses BubbleMaps' native algorithm (based on on-chain clustering analysis)
 - BubbleMaps risk signal: {bubblemaps_risk_signal}
 
 MARKET DATA (Birdeye):

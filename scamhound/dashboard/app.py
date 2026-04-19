@@ -469,6 +469,16 @@ async def health():
     })
 
 
+@app.get("/api/health/bubblemaps")
+async def bubblemaps_quota():
+    """
+    BubbleMaps API quota status endpoint.
+    Returns daily quota usage and reset information.
+    """
+    from clients import bubblemaps_client
+    return JSONResponse(content=bubblemaps_client.get_quota_status())
+
+
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(
     request: Request,

@@ -196,20 +196,34 @@ async def _async_get_bubblemaps_data(token_mint: str) -> Optional[Dict[str, Any]
             bubblemaps_client.get_cluster_analysis, token_mint, chain="solana"
         )
         if bubblemaps_data:
+            decentralization_score = bubblemaps_data.get(
+                "decentralization_score", 0
+            )
+            cluster_count = bubblemaps_data.get("cluster_count", 0)
+            largest_cluster_share = bubblemaps_data.get(
+                "largest_cluster_share", 0
+            )
+
+            # Derive risk signal from the data
+            if largest_cluster_share > 70 or cluster_count == 1:
+                risk_signal = "HIGHLY_CENTRALIZED"
+            elif largest_cluster_share > 40 or cluster_count < 3:
+                risk_signal = "MODERATE_CENTRALIZATION"
+            elif cluster_count >= 5 and largest_cluster_share < 25:
+                risk_signal = "DECENTRALIZED"
+            else:
+                risk_signal = "MODERATE"
+
             logger.info(
                 f"[SCAMHOUND] BubbleMaps analysis for {token_mint[:8]}...: "
-                f"decentralization={bubblemaps_data.get('decentralization_score')}, "
-                f"clusters={bubblemaps_data.get('cluster_count')}"
+                f"decentralization={decentralization_score}, "
+                f"clusters={cluster_count}"
             )
             return {
-                "decentralization_score": bubblemaps_data.get(
-                    "decentralization_score", 0
-                ),
-                "cluster_count": bubblemaps_data.get("cluster_count", 0),
-                "largest_cluster_share": bubblemaps_data.get(
-                    "largest_cluster_share", 0
-                ),
-                "risk_signal": bubblemaps_data.get("risk_signal", "UNKNOWN")
+                "decentralization_score": decentralization_score,
+                "cluster_count": cluster_count,
+                "largest_cluster_share": largest_cluster_share,
+                "risk_signal": risk_signal
             }
         logger.warning(
             f"[SCAMHOUND] No BubbleMaps data for {token_mint[:8]}..."
@@ -545,21 +559,48 @@ def _scan_single_token_sync_fallback(token_mint: str, skip_if_scored: bool = Tru
         
         # Get BubbleMaps cluster analysis
         try:
-            bubblemaps_data = bubblemaps_client.get_cluster_analysis(token_mint, chain="solana")
+            bubblemaps_data = bubblemaps_client.get_cluster_analysis(
+                token_mint, chain="solana"
+            )
             if bubblemaps_data:
+                decentralization_score = bubblemaps_data.get(
+                    "decentralization_score", 0
+                )
+                cluster_count = bubblemaps_data.get("cluster_count", 0)
+                largest_cluster_share = bubblemaps_data.get(
+                    "largest_cluster_share", 0
+                )
+
+                # Derive risk signal from the data
+                if largest_cluster_share > 70 or cluster_count == 1:
+                    risk_signal = "HIGHLY_CENTRALIZED"
+                elif largest_cluster_share > 40 or cluster_count < 3:
+                    risk_signal = "MODERATE_CENTRALIZATION"
+                elif cluster_count >= 5 and largest_cluster_share < 25:
+                    risk_signal = "DECENTRALIZED"
+                else:
+                    risk_signal = "MODERATE"
+
                 token_data["bubblemaps"] = {
-                    "decentralization_score": bubblemaps_data.get("decentralization_score", 0),
-                    "cluster_count": bubblemaps_data.get("cluster_count", 0),
-                    "largest_cluster_share": bubblemaps_data.get("largest_cluster_share", 0),
-                    "risk_signal": bubblemaps_data.get("risk_signal", "UNKNOWN")
+                    "decentralization_score": decentralization_score,
+                    "cluster_count": cluster_count,
+                    "largest_cluster_share": largest_cluster_share,
+                    "risk_signal": risk_signal
                 }
-                logger.info(f"[SCAMHOUND] BubbleMaps analysis for {token_mint[:8]}...: "
-                           f"decentralization={bubblemaps_data.get('decentralization_score')}, "
-                           f"clusters={bubblemaps_data.get('cluster_count')}")
+                logger.info(
+                    f"[SCAMHOUND] BubbleMaps analysis for {token_mint[:8]}...: "
+                    f"decentralization={decentralization_score}, "
+                    f"clusters={cluster_count}"
+                )
             else:
-                logger.warning(f"[SCAMHOUND] No BubbleMaps data for {token_mint[:8]}...")
+                logger.warning(
+                    f"[SCAMHOUND] No BubbleMaps data for {token_mint[:8]}..."
+                )
         except Exception as e:
-            logger.warning(f"[SCAMHOUND] Could not get BubbleMaps data for {token_mint[:8]}...: {e}")
+            logger.warning(
+                f"[SCAMHOUND] Could not get BubbleMaps data for "
+                f"{token_mint[:8]}...: {e}"
+            )
         
         # Get creator wallet
         creator_wallet = token_data.get("creator", {}).get("wallet")
