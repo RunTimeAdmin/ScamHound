@@ -1954,6 +1954,54 @@ textarea::placeholder {
 }
 
 /* --------------------------------------------------------------------------
+   22b. Bulk Scan Notice
+   -------------------------------------------------------------------------- */
+
+.bulk-scan-notice {
+    background: var(--bg-secondary);
+    border: 1px solid var(--bg-tertiary);
+    border-left: 4px solid #4a9eff;
+    border-radius: 8px;
+    margin: var(--space-md) var(--space-xl);
+    padding: var(--space-md) var(--space-lg);
+}
+
+.bulk-notice-content {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.bulk-notice-icon {
+    font-size: 1.4rem;
+    flex-shrink: 0;
+}
+
+.bulk-notice-text {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.bulk-notice-text strong {
+    color: var(--text-primary);
+}
+
+.bulk-notice-link {
+    display: inline-block;
+    margin-left: 8px;
+    color: #4a9eff;
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+
+.bulk-notice-link:hover {
+    color: #79b8ff;
+    text-decoration: underline;
+}
+
+/* --------------------------------------------------------------------------
    23. Disclaimer Banner Styles
    -------------------------------------------------------------------------- */
 

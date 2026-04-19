@@ -73,8 +73,8 @@
         </div>
     </div>
 
-    <!-- Prominent Auto-Scan Banner -->
-    <div class="autoscan-banner" id="autoscan-banner">
+    <!-- Prominent Auto-Scan Banner (Admin Only) -->
+    <div class="autoscan-banner" id="autoscan-banner" style="display: none;">
         <div class="autoscan-banner-content">
             <div class="autoscan-label-section">
                 <span class="autoscan-icon">🔄</span>
@@ -86,6 +86,17 @@
                 <button id="autoscan-toggle" class="autoscan-toggle-large" onclick="toggleAutoscan()" aria-label="Toggle Auto-Scan">
                     <span class="autoscan-slider-large"></span>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Scan Notice (Public) -->
+    <div class="bulk-scan-notice" id="bulk-scan-notice">
+        <div class="bulk-notice-content">
+            <span class="bulk-notice-icon">🔒</span>
+            <div class="bulk-notice-text">
+                <strong>Bulk Scanning Disabled</strong> — This public instance supports single token analysis only. For bulk scanning capabilities, clone the project and configure with your own API keys.
+                <a href="https://github.com/RunTimeAdmin/ScamHound" target="_blank" class="bulk-notice-link">View on GitHub →</a>
             </div>
         </div>
     </div>
@@ -305,8 +316,13 @@
 
         // Auto-scan toggle functionality
         let autoscanToggling = false;
+        let adminToken = null;
 
         async function loadAutoscanStatus() {
+            // Only load status if admin token is present
+            if (!adminToken) {
+                return;
+            }
             try {
                 const response = await fetch('/api/autoscan/status');
                 const data = await response.json();
@@ -339,13 +355,17 @@
 
         async function toggleAutoscan() {
             if (autoscanToggling) return; // Prevent double-clicks
+            if (!adminToken) {
+                showToast('Admin access required', 'error');
+                return;
+            }
 
             autoscanToggling = true;
             const toggleBtn = document.getElementById('autoscan-toggle');
             toggleBtn.disabled = true;
 
             try {
-                const response = await fetch('/api/autoscan/toggle', {
+                const response = await fetch('/api/autoscan/toggle?token=' + encodeURIComponent(adminToken), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -372,25 +392,36 @@
             }
         }
 
-        // Load auto-scan status on page load
-        loadAutoscanStatus();
-
         // Disclaimer toggle functionality
         function toggleDisclaimer() {
             const banner = document.getElementById('disclaimer-banner');
             banner.classList.toggle('collapsed');
         }
 
-        // Check for admin token in URL and show settings link if present
+        // Check for admin token in URL and show admin-only UI elements
         (function() {
             const urlParams = new URLSearchParams(window.location.search);
-            const adminToken = urlParams.get('token');
-            if (adminToken) {
+            const token = urlParams.get('token');
+            if (token) {
+                adminToken = token;
+                // Show settings link
                 const settingsLink = document.getElementById('settings-nav-link');
                 if (settingsLink) {
                     settingsLink.style.display = 'inline';
                     settingsLink.href = '/settings?token=' + encodeURIComponent(adminToken);
                 }
+                // Show auto-scan banner (admin only)
+                const autoscanBanner = document.getElementById('autoscan-banner');
+                if (autoscanBanner) {
+                    autoscanBanner.style.display = 'block';
+                }
+                // Hide bulk scan notice for admin (they have full access)
+                const bulkNotice = document.getElementById('bulk-scan-notice');
+                if (bulkNotice) {
+                    bulkNotice.style.display = 'none';
+                }
+                // Load auto-scan status now that banner is visible
+                loadAutoscanStatus();
             }
         })();
 

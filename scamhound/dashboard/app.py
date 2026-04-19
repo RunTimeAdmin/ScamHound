@@ -573,13 +573,28 @@ async def autoscan_status():
 
 
 @app.post("/api/autoscan/toggle")
-async def autoscan_toggle():
+async def autoscan_toggle(
+    request: Request,
+    token: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None)
+):
     """
     Toggle auto-scan on/off.
     When enabled: starts APScheduler to run monitor.run_cycle() every 60s
     When disabled: shuts down the scheduler
     Returns new status.
+    Requires admin authentication.
     """
+    # Verify admin authentication
+    if not _verify_auth(token, authorization):
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "Unauthorized. Admin access required."
+            },
+            status_code=401
+        )
+
     global _autoscan_scheduler, _autoscan_enabled, _autoscan_interval
 
     with _autoscan_lock:
