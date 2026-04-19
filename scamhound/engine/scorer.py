@@ -155,6 +155,27 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     else:
         age_str = "Unknown"
     
+    # Pre-compute warning strings (Python 3.10 doesn't allow complex expressions in f-strings)
+    new_wallet_warning = "(NEW WALLET - HIGH RISK)" if 0 <= wallet_age < 7 else ""
+    abandoned_count = len(abandoned)
+    abandoned_warning = "(RUG HISTORY DETECTED)" if abandoned else ""
+    clustering_warning = "(HIGH CLUSTERING - SUSPICIOUS)" if clustering_score > 0.4 else ""
+    bubblemaps_unavailable_note = (
+        "\nNOTE: BubbleMaps cluster analysis data is UNAVAILABLE for this token. "
+        "Scoring should rely on Helius holder data, Birdeye market data, and Bags.fm metadata only. "
+        "Do not penalize or reward the absence of BubbleMaps data."
+    ) if not has_bubblemaps_data else ""
+    decentralization_warning = (
+        "(CENTRALIZED - HIGH RISK)" if decentralization_score < 30
+        else "(MODERATE RISK)" if decentralization_score < 50
+        else ""
+    )
+    cluster_share_warning = (
+        "(HIGHLY CENTRALIZED)" if largest_cluster_share > 70
+        else "(MODERATE CONCERN)" if largest_cluster_share > 50
+        else ""
+    )
+
     return f"""Analyze this Solana token launched on Bags.fm for rug pull risk:
 
 TOKEN DETAILS:
@@ -179,17 +200,17 @@ BAGS.FM DATA:
 - Top holders: {json.dumps(top_holders[:5])}
 
 ON-CHAIN CREATOR HISTORY (Helius):
-- Creator wallet age: {wallet_age} days {f"(NEW WALLET - HIGH RISK)" if 0 <= wallet_age < 7 else ""}
+- Creator wallet age: {wallet_age} days {new_wallet_warning}
 - Prior token launches from this wallet: {prior_launches}
-- Previously abandoned tokens: {len(abandoned)} {("(RUG HISTORY DETECTED)" if abandoned else "")}
+- Previously abandoned tokens: {abandoned_count} {abandoned_warning}
 
 HOLDER CLUSTERING ANALYSIS:
-- Clustering score (0.0-1.0): {clustering_score} {("(HIGH CLUSTERING - SUSPICIOUS)" if clustering_score > 0.4 else "")}
+- Clustering score (0.0-1.0): {clustering_score} {clustering_warning}
 
-BUBBLEMAPS ANALYSIS (Token Holder Clustering):{f"\nNOTE: BubbleMaps cluster analysis data is UNAVAILABLE for this token. Scoring should rely on Helius holder data, Birdeye market data, and Bags.fm metadata only. Do not penalize or reward the absence of BubbleMaps data." if not has_bubblemaps_data else ""}
-- Decentralization Score (0-100, higher = better): {decentralization_score} {("(CENTRALIZED - HIGH RISK)" if decentralization_score < 30 else "(MODERATE RISK)" if decentralization_score < 50 else "")}
+BUBBLEMAPS ANALYSIS (Token Holder Clustering):{bubblemaps_unavailable_note}
+- Decentralization Score (0-100, higher = better): {decentralization_score} {decentralization_warning}
 - Number of clusters detected: {cluster_count}
-- Largest cluster share: {largest_cluster_share}% {("(HIGHLY CENTRALIZED)" if largest_cluster_share > 70 else "(MODERATE CONCERN)" if largest_cluster_share > 50 else "")}
+- Largest cluster share: {largest_cluster_share}% {cluster_share_warning}
 - Note: Decentralization score uses BubbleMaps' native algorithm (based on on-chain clustering analysis)
 - BubbleMaps risk signal: {bubblemaps_risk_signal}
 
