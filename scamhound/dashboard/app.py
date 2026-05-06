@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 # Type imports removed - not needed
 
 from fastapi import (
-    FastAPI, Request, WebSocket, WebSocketDisconnect
+    FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 )
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -1391,6 +1391,17 @@ async def list_api_keys(request: Request):
 
     keys = database.get_all_api_keys()
     return JSONResponse(content={"success": True, "keys": keys, "total": len(keys)})
+
+
+@app.post("/api/auth/verify")
+async def verify_admin(request: Request):
+    """Verify admin token without exposing it in URL."""
+    admin_token = os.environ.get("SCAMHOUND_ADMIN_TOKEN", "")
+    body = await request.json()
+    provided_token = body.get("token", "")
+    if not admin_token or provided_token != admin_token:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+    return {"status": "authenticated", "role": "admin"}
 
 
 @app.delete("/api/scores/clear")

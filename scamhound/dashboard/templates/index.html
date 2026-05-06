@@ -27,6 +27,112 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+        /* Login button */
+        .btn-login {
+            background: transparent;
+            border: 1px solid #58a6ff;
+            color: #58a6ff;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: background 0.2s, border-color 0.2s;
+            text-decoration: none;
+        }
+        .btn-login:hover {
+            background: rgba(88, 166, 255, 0.15);
+        }
+        /* Login Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-box {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 32px;
+            width: 100%;
+            max-width: 380px;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+        }
+        .modal-box h2 {
+            margin: 0 0 8px 0;
+            color: #e6edf3;
+            font-size: 20px;
+        }
+        .modal-box p {
+            color: #8b949e;
+            margin: 0 0 20px 0;
+            font-size: 14px;
+        }
+        .modal-box input {
+            width: 100%;
+            padding: 10px 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #e6edf3;
+            font-size: 14px;
+            margin-bottom: 12px;
+            box-sizing: border-box;
+        }
+        .modal-box input:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        .modal-actions button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+        }
+        .modal-btn-submit {
+            background: #238636;
+            color: #fff;
+        }
+        .modal-btn-submit:hover { background: #2ea043; }
+        .modal-btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+        .modal-btn-cancel {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d !important;
+        }
+        .modal-btn-cancel:hover { background: #30363d; }
+        .modal-error {
+            color: #f85149;
+            font-size: 13px;
+            margin-bottom: 12px;
+            display: none;
+        }
+        /* Session empty state */
+        .session-empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: #8b949e;
+        }
+        .session-empty-state h3 {
+            color: #e6edf3;
+            margin: 0 0 8px 0;
+            font-size: 18px;
+        }
+        .session-empty-state p {
+            margin: 0;
+            font-size: 14px;
+        }
     </style>
 <script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
 </head>
@@ -43,6 +149,7 @@
                 <a href="/watchlist">Watchlist</a>
                 <a href="/settings" id="settings-nav-link" style="display:none">Settings</a>
                 <a href="#" id="logout-link" style="display:none" onclick="doLogout()">Logout</a>
+                <a href="#" id="login-nav-btn" class="btn-login" onclick="openLoginModal(); return false;">🔑 Login</a>
             </nav>
             <p class="tagline">Real-time rug pull detection for Bags.fm</p>
         </div>
@@ -275,6 +382,20 @@
         </div>
     </main>
 
+    <!-- Login Modal -->
+    <div class="modal-overlay" id="login-modal">
+        <div class="modal-box">
+            <h2>🔑 Admin Login</h2>
+            <p>Enter your admin token to access settings and management features.</p>
+            <div class="modal-error" id="login-error">Invalid admin token</div>
+            <input type="password" id="login-token-input" placeholder="Admin token..." autocomplete="off">
+            <div class="modal-actions">
+                <button class="modal-btn-cancel" onclick="closeLoginModal()">Cancel</button>
+                <button class="modal-btn-submit" id="login-submit-btn" onclick="submitLogin()">Login</button>
+            </div>
+        </div>
+    </div>
+
     <footer>
         <div class="footer-content">
             <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a> (CCIE #14019)</p>
@@ -286,6 +407,10 @@
     </footer>
 
     <script>
+        // --- Session scan isolation ---
+        let sessionScans = []; // mints scanned in this browser session
+        let isAdmin = false;
+
         // Auto-refresh stats via API
         async function refreshStats() {
             try {
@@ -339,9 +464,10 @@
                 if (data.success) {
                     showToast(`Scan complete! ${data.result.symbol} scored ${data.result.risk_score} (${data.result.risk_level})`, 'success');
                     mintInput.value = '';
-                    // Refresh stats and reload page after a short delay
+                    // Add to session scans and render
+                    sessionScans.push(data.result);
+                    addTokenToTable(data.result);
                     refreshStats();
-                    setTimeout(() => window.location.reload(), 2000);
                 } else {
                     showToast(data.error || 'Scan failed', 'error');
                 }
@@ -586,6 +712,54 @@
             banner.classList.toggle('collapsed');
         }
 
+        // Login modal functions
+        function openLoginModal() {
+            document.getElementById('login-modal').classList.add('active');
+            document.getElementById('login-token-input').value = '';
+            document.getElementById('login-error').style.display = 'none';
+            setTimeout(() => document.getElementById('login-token-input').focus(), 100);
+        }
+        function closeLoginModal() {
+            document.getElementById('login-modal').classList.remove('active');
+        }
+        async function submitLogin() {
+            const input = document.getElementById('login-token-input');
+            const errorEl = document.getElementById('login-error');
+            const btn = document.getElementById('login-submit-btn');
+            const token = input.value.trim();
+            if (!token) { errorEl.textContent = 'Please enter a token'; errorEl.style.display = 'block'; return; }
+            btn.disabled = true;
+            errorEl.style.display = 'none';
+            try {
+                const resp = await fetch('/api/auth/verify', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({token: token})
+                });
+                if (resp.ok) {
+                    localStorage.setItem('scamhound_admin_token', token);
+                    closeLoginModal();
+                    window.location.reload();
+                } else {
+                    errorEl.textContent = 'Invalid admin token';
+                    errorEl.style.display = 'block';
+                }
+            } catch(e) {
+                errorEl.textContent = 'Network error. Try again.';
+                errorEl.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+        // Enter key in login modal
+        document.getElementById('login-token-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') submitLogin();
+        });
+        // Close modal on overlay click
+        document.getElementById('login-modal').addEventListener('click', function(e) {
+            if (e.target === this) closeLoginModal();
+        });
+
         // Admin token management: extract from URL, persist in localStorage
         (function() {
             const urlParams = new URLSearchParams(window.location.search);
@@ -605,6 +779,7 @@
             }
             if (storedToken) {
                 adminToken = storedToken;
+                isAdmin = true;
                 // Show settings link
                 const settingsLink = document.getElementById('settings-nav-link');
                 if (settingsLink) {
@@ -614,6 +789,11 @@
                 const logoutLink = document.getElementById('logout-link');
                 if (logoutLink) {
                     logoutLink.style.display = 'inline';
+                }
+                // Hide login button for admin
+                const loginBtn = document.getElementById('login-nav-btn');
+                if (loginBtn) {
+                    loginBtn.style.display = 'none';
                 }
                 // Show auto-scan banner (admin only)
                 const autoscanBanner = document.getElementById('autoscan-banner');
@@ -637,6 +817,12 @@
                 }
                 // Load auto-scan status now that banner is visible
                 loadAutoscanStatus();
+            } else {
+                // Non-admin: show empty state instead of historical scans
+                const tbody = document.querySelector('.token-table tbody');
+                if (tbody) {
+                    tbody.innerHTML = `<tr><td colspan="8"><div class="session-empty-state"><h3>\uD83D\uDD0D Scan a Token</h3><p>Enter a Solana token mint address above to analyze its risk score.</p></div></td></tr>`;
+                }
             }
         })();
 
@@ -750,6 +936,12 @@
             }
             
             function addTokenToTable(token) {
+                // For non-admin: only show tokens from this session
+                if (!isAdmin) {
+                    const isMine = sessionScans.some(s => s.token_mint === token.token_mint);
+                    if (!isMine) return;
+                }
+
                 // If filtering, don't insert — show notification instead
                 if (isFiltering) {
                     newTokensWhileFiltering++;
@@ -774,6 +966,10 @@
                 const emptyState = tbody.querySelector('.empty-state');
                 if (emptyState) {
                     emptyState.parentElement.remove();
+                }
+                const sessionEmpty = tbody.querySelector('.session-empty-state');
+                if (sessionEmpty) {
+                    sessionEmpty.closest('tr').remove();
                 }
                 
                 // Create and prepend new row
