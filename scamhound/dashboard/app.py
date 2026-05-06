@@ -1393,6 +1393,20 @@ async def list_api_keys(request: Request):
     return JSONResponse(content={"success": True, "keys": keys, "total": len(keys)})
 
 
+@app.delete("/api/scores/clear")
+async def clear_scores(request: Request):
+    """Clear all scan results from the database. Admin only."""
+    if not _verify_auth(request):
+        return JSONResponse(
+            content={"success": False, "error": "Unauthorized. Admin access required."},
+            status_code=401
+        )
+
+    result = database.clear_all_scores()
+    logger.info(f"[SCAMHOUND] Cleared all scans: {result}")
+    return JSONResponse(content={"status": "cleared", **result})
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize database and config on startup."""

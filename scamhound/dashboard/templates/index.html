@@ -7,6 +7,27 @@
     <link rel="stylesheet" href="/static/style.css">
     <link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48.png">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <style>
+        .btn-clear {
+            background: transparent;
+            border: 1px solid #f85149;
+            color: #f85149;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: background 0.2s;
+            display: none;
+        }
+        .btn-clear:hover {
+            background: rgba(248, 81, 73, 0.15);
+        }
+        .btn-clear:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
 <script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
 </head>
 <body>
@@ -119,6 +140,9 @@
                                 <span>📥</span> Export PDF
                             </a>
                         </div>
+                        <button id="clear-scans-btn" class="btn-clear" onclick="clearScans()" title="Delete all scan results">
+                            🗑️ Clear Scans
+                        </button>
                     </div>
                 </div>
                 <div class="scan-input-group">
@@ -606,10 +630,48 @@
                 if (proHint) {
                     proHint.style.display = 'none';
                 }
+                // Show clear scans button for admin
+                const clearBtn = document.getElementById('clear-scans-btn');
+                if (clearBtn) {
+                    clearBtn.style.display = 'inline-block';
+                }
                 // Load auto-scan status now that banner is visible
                 loadAutoscanStatus();
             }
         })();
+
+        // Clear all scans
+        async function clearScans() {
+            if (!adminToken) {
+                showToast('Admin access required', 'error');
+                return;
+            }
+            if (!confirm('Are you sure you want to clear all scan results? This cannot be undone.')) {
+                return;
+            }
+            const btn = document.getElementById('clear-scans-btn');
+            btn.disabled = true;
+            try {
+                const response = await fetch('/api/scores/clear', {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': 'Bearer ' + adminToken
+                    }
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showToast(`Cleared ${data.scored_deleted} tokens and ${data.history_deleted} history records`, 'success');
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    showToast(data.error || 'Failed to clear scans', 'error');
+                }
+            } catch (e) {
+                console.error('Clear scans error:', e);
+                showToast('Network error. Please try again.', 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
 
         // Logout function
         function doLogout() {

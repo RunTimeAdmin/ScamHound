@@ -924,6 +924,19 @@ def get_score_history(token_mint: str) -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def clear_all_scores():
+    """Delete all scored tokens and score history. Returns count of deleted records."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM scored_tokens")
+    scored_count = c.rowcount
+    c.execute("DELETE FROM score_history")
+    history_count = c.rowcount
+    conn.commit()
+    conn.close()
+    return {"scored_deleted": scored_count, "history_deleted": history_count}
+
+
 def get_tokens_for_rescore(max_age_days: int = 7, min_score: int = 40, limit: int = 25) -> List[Dict[str, Any]]:
     """Get tokens eligible for re-scoring.
     Criteria: risk_score >= min_score, first scored within last max_age_days,
