@@ -27,111 +27,18 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
-        /* Login button */
-        .btn-login {
-            background: transparent;
-            border: 1px solid #58a6ff;
-            color: #58a6ff;
-            padding: 6px 14px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 500;
-            transition: background 0.2s, border-color 0.2s;
-            text-decoration: none;
-        }
-        .btn-login:hover {
-            background: rgba(88, 166, 255, 0.15);
-        }
-        /* Login Modal */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7);
-            z-index: 9999;
+        .user-info {
+            display: inline-flex;
             align-items: center;
-            justify-content: center;
-        }
-        .modal-overlay.active { display: flex; }
-        .modal-box {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 32px;
-            width: 100%;
-            max-width: 380px;
-            box-shadow: 0 16px 48px rgba(0,0,0,0.4);
-        }
-        .modal-box h2 {
-            margin: 0 0 8px 0;
-            color: #e6edf3;
-            font-size: 20px;
-        }
-        .modal-box p {
-            color: #8b949e;
-            margin: 0 0 20px 0;
-            font-size: 14px;
-        }
-        .modal-box input {
-            width: 100%;
-            padding: 10px 12px;
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            color: #e6edf3;
-            font-size: 14px;
-            margin-bottom: 12px;
-            box-sizing: border-box;
-        }
-        .modal-box input:focus {
-            outline: none;
-            border-color: #58a6ff;
-        }
-        .modal-actions {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-        }
-        .modal-actions button {
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-            border: none;
-        }
-        .modal-btn-submit {
-            background: #238636;
-            color: #fff;
-        }
-        .modal-btn-submit:hover { background: #2ea043; }
-        .modal-btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
-        .modal-btn-cancel {
-            background: #21262d;
-            color: #c9d1d9;
-            border: 1px solid #30363d !important;
-        }
-        .modal-btn-cancel:hover { background: #30363d; }
-        .modal-error {
-            color: #f85149;
+            gap: 6px;
+            color: var(--text-secondary, #aaa);
             font-size: 13px;
-            margin-bottom: 12px;
-            display: none;
         }
-        /* Session empty state */
-        .session-empty-state {
-            text-align: center;
-            padding: 48px 24px;
-            color: #8b949e;
-        }
-        .session-empty-state h3 {
-            color: #e6edf3;
-            margin: 0 0 8px 0;
-            font-size: 18px;
-        }
-        .session-empty-state p {
-            margin: 0;
-            font-size: 14px;
+        .user-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            vertical-align: middle;
         }
     </style>
 <script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
@@ -148,8 +55,7 @@
                 <a href="/leaderboard">Leaderboard</a>
                 <a href="/watchlist">Watchlist</a>
                 <a href="/settings" id="settings-nav-link" style="display:none">Settings</a>
-                <a href="#" id="logout-link" style="display:none" onclick="doLogout()">Logout</a>
-                <a href="#" id="login-nav-btn" class="btn-login" onclick="openLoginModal(); return false;">🔑 Login</a>
+                <a href="#" id="logout-link" style="display:none" onclick="doLogout(); return false;">Logout</a>
             </nav>
             <p class="tagline">Real-time rug pull detection for Bags.fm</p>
         </div>
@@ -279,7 +185,6 @@
             <div class="filter-bar-inner">
                 <div class="filter-input-group">
                     <input type="text" id="filter-search" class="filter-input" placeholder="Search by name, symbol, or mint address...">
-                    <span id="pro-hint" class="pro-hint" style="display:none" title="Pro feature — get an API key for advanced search">🔒</span>
                 </div>
                 <select id="filter-risk-level" class="filter-select">
                     <option value="">All Levels</option>
@@ -382,20 +287,6 @@
         </div>
     </main>
 
-    <!-- Login Modal -->
-    <div class="modal-overlay" id="login-modal">
-        <div class="modal-box">
-            <h2>🔑 Admin Login</h2>
-            <p>Enter your admin token to access settings and management features.</p>
-            <div class="modal-error" id="login-error">Invalid admin token</div>
-            <input type="password" id="login-token-input" placeholder="Admin token..." autocomplete="off">
-            <div class="modal-actions">
-                <button class="modal-btn-cancel" onclick="closeLoginModal()">Cancel</button>
-                <button class="modal-btn-submit" id="login-submit-btn" onclick="submitLogin()">Login</button>
-            </div>
-        </div>
-    </div>
-
     <footer>
         <div class="footer-content">
             <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a> (CCIE #14019)</p>
@@ -407,9 +298,79 @@
     </footer>
 
     <script>
-        // --- Session scan isolation ---
-        let sessionScans = []; // mints scanned in this browser session
+        // --- Auth state ---
+        let currentUser = null;
         let isAdmin = false;
+
+        async function initAuth() {
+            try {
+                const response = await fetch('/api/auth/me');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.authenticated) {
+                        currentUser = data.user;
+                        isAdmin = data.user.is_admin;
+                        updateAuthUI();
+                        // Load autoscan status for admin
+                        if (isAdmin) {
+                            loadAutoscanStatus();
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Auth check failed:', e);
+            }
+        }
+
+        function updateAuthUI() {
+            // Show user info in nav
+            const navLinks = document.querySelector('.nav-links');
+
+            // Show settings link for admin
+            const settingsLink = document.getElementById('settings-nav-link');
+            if (settingsLink && isAdmin) {
+                settingsLink.style.display = 'inline';
+            }
+
+            // Show logout link
+            const logoutLink = document.getElementById('logout-link');
+            if (logoutLink) {
+                logoutLink.style.display = 'inline';
+            }
+
+            // Show clear scans button for all authenticated users
+            const clearBtn = document.getElementById('clear-scans-btn');
+            if (clearBtn) {
+                clearBtn.style.display = 'inline-block';
+                // Change label for non-admin
+                if (!isAdmin) {
+                    clearBtn.textContent = '🗑️ Clear My Scans';
+                }
+            }
+
+            // Show auto-scan banner for admin
+            if (isAdmin) {
+                const autoscanBanner = document.getElementById('autoscan-banner');
+                if (autoscanBanner) {
+                    autoscanBanner.style.display = 'block';
+                }
+                // Hide bulk scan notice for admin
+                const bulkNotice = document.getElementById('bulk-scan-notice');
+                if (bulkNotice) {
+                    bulkNotice.style.display = 'none';
+                }
+            }
+
+            // Show user avatar/name if available
+            if (currentUser.picture_url) {
+                const userInfo = document.createElement('span');
+                userInfo.className = 'user-info';
+                userInfo.innerHTML = `<img src="${currentUser.picture_url}" alt="" class="user-avatar"> ${currentUser.name || currentUser.email}`;
+                navLinks.insertBefore(userInfo, document.getElementById('logout-link'));
+            }
+        }
+
+        initAuth();
 
         // Auto-refresh stats via API
         async function refreshStats() {
@@ -453,10 +414,8 @@
             try {
                 const response = await fetch('/api/scan', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ mint: mint })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token_mint: mint })
                 });
 
                 const data = await response.json();
@@ -464,8 +423,6 @@
                 if (data.success) {
                     showToast(`Scan complete! ${data.result.symbol} scored ${data.result.risk_score} (${data.result.risk_level})`, 'success');
                     mintInput.value = '';
-                    // Add to session scans and render
-                    sessionScans.push(data.result);
                     addTokenToTable(data.result);
                     refreshStats();
                 } else {
@@ -542,12 +499,8 @@
             if (currentFilters.sort_by) params.set('sort_by', currentFilters.sort_by);
             if (currentFilters.order) params.set('order', currentFilters.order);
 
-            const headers = {};
-            const apiKey = localStorage.getItem('scamhound_admin_token');
-            if (apiKey) headers['X-API-Key'] = apiKey;
-
             try {
-                const response = await fetch('/api/scores?' + params.toString(), { headers });
+                const response = await fetch(`/api/scores?${params.toString()}`);
                 const data = await response.json();
                 renderTokenTable(data.tokens || []);
                 updatePagination(data.page || 1, data.pages || 1, data.total || 0);
@@ -629,13 +582,9 @@
 
         // Auto-scan toggle functionality
         let autoscanToggling = false;
-        let adminToken = null;
 
         async function loadAutoscanStatus() {
-            // Only load status if admin token is present
-            if (!adminToken) {
-                return;
-            }
+            if (!isAdmin) return;
             try {
                 const response = await fetch('/api/autoscan/status');
                 const data = await response.json();
@@ -667,8 +616,8 @@
         }
 
         async function toggleAutoscan() {
-            if (autoscanToggling) return; // Prevent double-clicks
-            if (!adminToken) {
+            if (autoscanToggling) return;
+            if (!isAdmin) {
                 showToast('Admin access required', 'error');
                 return;
             }
@@ -680,10 +629,7 @@
             try {
                 const response = await fetch('/api/autoscan/toggle', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + adminToken
-                    }
+                    headers: { 'Content-Type': 'application/json' }
                 });
 
                 const data = await response.json();
@@ -712,157 +658,34 @@
             banner.classList.toggle('collapsed');
         }
 
-        // Login modal functions
-        function openLoginModal() {
-            document.getElementById('login-modal').classList.add('active');
-            document.getElementById('login-token-input').value = '';
-            document.getElementById('login-error').style.display = 'none';
-            setTimeout(() => document.getElementById('login-token-input').focus(), 100);
-        }
-        function closeLoginModal() {
-            document.getElementById('login-modal').classList.remove('active');
-        }
-        async function submitLogin() {
-            const input = document.getElementById('login-token-input');
-            const errorEl = document.getElementById('login-error');
-            const btn = document.getElementById('login-submit-btn');
-            const token = input.value.trim();
-            if (!token) { errorEl.textContent = 'Please enter a token'; errorEl.style.display = 'block'; return; }
-            btn.disabled = true;
-            errorEl.style.display = 'none';
-            try {
-                const resp = await fetch('/api/auth/verify', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({token: token})
-                });
-                if (resp.ok) {
-                    localStorage.setItem('scamhound_admin_token', token);
-                    closeLoginModal();
-                    window.location.reload();
-                } else {
-                    errorEl.textContent = 'Invalid admin token';
-                    errorEl.style.display = 'block';
-                }
-            } catch(e) {
-                errorEl.textContent = 'Network error. Try again.';
-                errorEl.style.display = 'block';
-            } finally {
-                btn.disabled = false;
-            }
-        }
-        // Enter key in login modal
-        document.getElementById('login-token-input').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') submitLogin();
-        });
-        // Close modal on overlay click
-        document.getElementById('login-modal').addEventListener('click', function(e) {
-            if (e.target === this) closeLoginModal();
-        });
-
-        // Admin token management: extract from URL, persist in localStorage
-        (function() {
-            const urlParams = new URLSearchParams(window.location.search);
-            const tokenFromUrl = urlParams.get('token');
-            if (tokenFromUrl) {
-                localStorage.setItem('scamhound_admin_token', tokenFromUrl);
-                // Remove token from URL to prevent leaking in logs/history/referrer
-                urlParams.delete('token');
-                const cleanUrl = urlParams.toString() ? window.location.pathname + '?' + urlParams.toString() : window.location.pathname;
-                history.replaceState(null, '', cleanUrl);
-            }
-            const storedToken = localStorage.getItem('scamhound_admin_token');
-            // Show pro hint if no admin token
-            if (!storedToken) {
-                const proHint = document.getElementById('pro-hint');
-                if (proHint) proHint.style.display = 'inline';
-            }
-            if (storedToken) {
-                adminToken = storedToken;
-                isAdmin = true;
-                // Show settings link
-                const settingsLink = document.getElementById('settings-nav-link');
-                if (settingsLink) {
-                    settingsLink.style.display = 'inline';
-                }
-                // Show logout link
-                const logoutLink = document.getElementById('logout-link');
-                if (logoutLink) {
-                    logoutLink.style.display = 'inline';
-                }
-                // Hide login button for admin
-                const loginBtn = document.getElementById('login-nav-btn');
-                if (loginBtn) {
-                    loginBtn.style.display = 'none';
-                }
-                // Show auto-scan banner (admin only)
-                const autoscanBanner = document.getElementById('autoscan-banner');
-                if (autoscanBanner) {
-                    autoscanBanner.style.display = 'block';
-                }
-                // Hide bulk scan notice for admin (they have full access)
-                const bulkNotice = document.getElementById('bulk-scan-notice');
-                if (bulkNotice) {
-                    bulkNotice.style.display = 'none';
-                }
-                // Hide pro hint for admins
-                const proHint = document.getElementById('pro-hint');
-                if (proHint) {
-                    proHint.style.display = 'none';
-                }
-                // Show clear scans button for admin
-                const clearBtn = document.getElementById('clear-scans-btn');
-                if (clearBtn) {
-                    clearBtn.style.display = 'inline-block';
-                }
-                // Load auto-scan status now that banner is visible
-                loadAutoscanStatus();
-            } else {
-                // Non-admin: show empty state instead of historical scans
-                const tbody = document.querySelector('.token-table tbody');
-                if (tbody) {
-                    tbody.innerHTML = `<tr><td colspan="8"><div class="session-empty-state"><h3>\uD83D\uDD0D Scan a Token</h3><p>Enter a Solana token mint address above to analyze its risk score.</p></div></td></tr>`;
-                }
-            }
-        })();
-
         // Clear all scans
         async function clearScans() {
-            if (!adminToken) {
-                showToast('Admin access required', 'error');
-                return;
-            }
-            if (!confirm('Are you sure you want to clear all scan results? This cannot be undone.')) {
+            if (!confirm(isAdmin ? 'Clear ALL scan results? This cannot be undone.' : 'Clear your scan results? This cannot be undone.')) {
                 return;
             }
             const btn = document.getElementById('clear-scans-btn');
             btn.disabled = true;
             try {
-                const response = await fetch('/api/scores/clear', {
-                    method: 'DELETE',
-                    headers: {
-                        'Authorization': 'Bearer ' + adminToken
-                    }
-                });
+                const response = await fetch('/api/scores/clear', { method: 'DELETE' });
                 const data = await response.json();
                 if (response.ok) {
-                    showToast(`Cleared ${data.scored_deleted} tokens and ${data.history_deleted} history records`, 'success');
+                    showToast(`Cleared ${data.scored_deleted} tokens`, 'success');
                     setTimeout(() => window.location.reload(), 1500);
                 } else {
                     showToast(data.error || 'Failed to clear scans', 'error');
                 }
             } catch (e) {
                 console.error('Clear scans error:', e);
-                showToast('Network error. Please try again.', 'error');
+                showToast('Network error', 'error');
             } finally {
                 btn.disabled = false;
             }
         }
 
         // Logout function
-        function doLogout() {
-            localStorage.removeItem('scamhound_admin_token');
-            window.location.reload();
+        async function doLogout() {
+            await fetch('/auth/logout', { method: 'POST' });
+            window.location.href = '/login';
         }
 
         // WebSocket Real-time Updates
@@ -936,12 +759,6 @@
             }
             
             function addTokenToTable(token) {
-                // For non-admin: only show tokens from this session
-                if (!isAdmin) {
-                    const isMine = sessionScans.some(s => s.token_mint === token.token_mint);
-                    if (!isMine) return;
-                }
-
                 // If filtering, don't insert — show notification instead
                 if (isFiltering) {
                     newTokensWhileFiltering++;
@@ -958,7 +775,6 @@
                 // Check if token already exists
                 const existingRow = tbody.querySelector(`a[href="/token/${token.token_mint}"]`);
                 if (existingRow) {
-                    // Token already in table, don't add duplicate
                     return;
                 }
                 
@@ -966,10 +782,6 @@
                 const emptyState = tbody.querySelector('.empty-state');
                 if (emptyState) {
                     emptyState.parentElement.remove();
-                }
-                const sessionEmpty = tbody.querySelector('.session-empty-state');
-                if (sessionEmpty) {
-                    sessionEmpty.closest('tr').remove();
                 }
                 
                 // Create and prepend new row
@@ -992,6 +804,9 @@
                 // Update stats
                 refreshStats();
             }
+            
+            // Make addTokenToTable available globally for scanToken()
+            window.addTokenToTable = addTokenToTable;
             
             function connect() {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

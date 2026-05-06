@@ -155,7 +155,31 @@ def init_db() -> None:
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_score_history_mint ON score_history(token_mint, scored_at DESC)")
-    
+
+    # Users table for Google OAuth accounts
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            google_id TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            name TEXT,
+            picture_url TEXT,
+            is_admin BOOLEAN DEFAULT FALSE,
+            created_at TEXT NOT NULL,
+            last_login_at TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+
+    # Add user_id column to scored_tokens if not exists
+    try:
+        cursor.execute("ALTER TABLE scored_tokens ADD COLUMN user_id INTEGER")
+    except Exception:
+        pass  # Column already exists
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_scored_user ON scored_tokens(user_id)")
+
     conn.commit()
     conn.close()
     print("[SCAMHOUND] Database initialized")
@@ -935,6 +959,82 @@ def clear_all_scores():
     conn.commit()
     conn.close()
     return {"scored_deleted": scored_count, "history_deleted": history_count}
+
+
+def create_or_update_user(google_id: str, email: str, name: str = None, picture_url: str = None) -> dict:
+    """Create a new user or update existing one on login. Returns user dict."""
+    conn = get_connection()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+
+    # Check if user exists
+    c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+    existing = c.fetchone()
+
+    if existing:
+        # Update last login and profile info
+        c.execute("""UPDATE users SET name = ?, picture_url = ?, last_login_at = ?
+                     WHERE google_id = ?""", (name, picture_url, now, google_id))
+        conn.commit()
+        c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+        result = dict(c.fetchone())
+        conn.close()
+        return result
+    else:
+        # Check if email is in admin list
+        admin_emails = [e.strip() for e in os.environ.get("SCAMHOUND_ADMIN_EMAILS", "").split(",") if e.strip()]
+        is_admin = email.lower() in [e.lower() for e in admin_emails]
+
+        c.execute("""INSERT INTO users (google_id, email, name, picture_url, is_admin, created_at, last_login_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (google_id, email, name, picture_url, is_admin, now, now))
+        conn.commit()
+        c.execute("SELECT * FROM users WHERE id = ?", (c.lastrowid,))
+        result = dict(c.fetchone())
+        conn.close()
+        return result
+
+
+def get_user_by_id(user_id: int) -> Optional[dict]:
+    """Get user by ID."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_google_id(google_id: str) -> Optional[dict]:
+    """Get user by Google ID."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def clear_user_scans(user_id: int) -> dict:
+    """Delete all scans for a specific user. Returns count."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM scored_tokens WHERE user_id = ?", (user_id,))
+    scored_count = c.rowcount
+    conn.commit()
+    conn.close()
+    return {"scored_deleted": scored_count}
+
+
+def get_scores_for_user(user_id: int, limit: int = 100, offset: int = 0) -> list:
+    """Get scored tokens for a specific user."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""SELECT * FROM scored_tokens WHERE user_id = ?
+                 ORDER BY scored_at DESC LIMIT ? OFFSET ?""", (user_id, limit, offset))
+    results = [dict(row) for row in c.fetchall()]
+    conn.close()
+    return results
 
 
 def get_tokens_for_rescore(max_age_days: int = 7, min_score: int = 40, limit: int = 25) -> List[Dict[str, Any]]:

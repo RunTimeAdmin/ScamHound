@@ -16,9 +16,10 @@ from typing import Dict, List, Optional
 from fastapi import (
     FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 )
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -26,6 +27,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from engine import database
 from engine import monitor
 from config import get_masked_keys, save_config, load_config
+from auth import oauth, init_oauth, get_current_user, create_jwt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -199,6 +201,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Session middleware required by Authlib for OAuth state
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("JWT_SECRET", "dev-secret"))
+
 # Get the directory paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -211,12 +216,94 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
+@app.get("/login")
+async def login_page(request: Request):
+    """Show login page."""
+    user = get_current_user(request)
+    if user:
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.get("/auth/login/google")
+async def login_google(request: Request):
+    """Redirect to Google OAuth consent screen."""
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", request.url_for("auth_callback_google"))
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+
+@app.get("/auth/callback/google")
+async def auth_callback_google(request: Request):
+    """Handle Google OAuth callback."""
+    try:
+        token = await oauth.google.authorize_access_token(request)
+        user_info = token.get('userinfo')
+        if not user_info:
+            user_info = await oauth.google.userinfo(token=token)
+
+        # Create or update user in database
+        user = database.create_or_update_user(
+            google_id=user_info['sub'],
+            email=user_info['email'],
+            name=user_info.get('name'),
+            picture_url=user_info.get('picture')
+        )
+
+        # Create JWT and set cookie
+        jwt_token = create_jwt(user['id'], user['email'], user['is_admin'])
+        response = RedirectResponse(url="/", status_code=302)
+        response.set_cookie(
+            key="scamhound_session",
+            value=jwt_token,
+            max_age=86400,  # 24 hours
+            httponly=True,
+            samesite="lax",
+            secure=os.environ.get("ENVIRONMENT", "production") == "production"
+        )
+        logger.info(f"[AUTH] User logged in: {user['email']} (admin={user['is_admin']})")
+        return response
+    except Exception as e:
+        logger.error(f"[AUTH] OAuth callback failed: {e}")
+        return RedirectResponse(url="/login?error=auth_failed", status_code=302)
+
+
+@app.post("/auth/logout")
+async def logout(request: Request):
+    """Clear session cookie."""
+    response = JSONResponse({"success": True})
+    response.delete_cookie("scamhound_session")
+    return response
+
+
+@app.get("/api/auth/me")
+async def get_me(request: Request):
+    """Return current authenticated user info."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    full_user = database.get_user_by_id(user['id'])
+    return JSONResponse({
+        "authenticated": True,
+        "user": {
+            "id": full_user['id'] if full_user else user['id'],
+            "email": user['email'],
+            "name": full_user.get('name', '') if full_user else '',
+            "picture_url": full_user.get('picture_url', '') if full_user else '',
+            "is_admin": user['is_admin']
+        }
+    })
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """
     Main dashboard page.
     Shows last 50 scored tokens with auto-refresh.
     """
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
     scores = database.get_recent_scores(limit=50)
     stats = database.get_stats()
     
@@ -225,7 +312,8 @@ async def index(request: Request):
         {
             "request": request,
             "scores": scores,
-            "stats": stats
+            "stats": stats,
+            "user": user
         }
     )
 
@@ -347,9 +435,17 @@ async def api_scores(
     API endpoint for scores.
     Returns JSON array of last N scores, or paginated/filtered results.
     """
+    # Check API key for programmatic access
     key_row, key_error = _check_api_key(request)
     if key_error:
         return key_error
+
+    # For browser (non-API-key) access, require user auth
+    user = None
+    if not key_row:
+        user = get_current_user(request)
+        if not user:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
 
     # Validate risk_level
     allowed_risk_levels = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
@@ -400,7 +496,11 @@ async def api_scores(
         )
         response = JSONResponse(content=result)
     else:
-        scores = database.get_recent_scores(limit=limit)
+        # If regular (non-admin) user via browser, show only their scans
+        if user and not user.get('is_admin'):
+            scores = database.get_scores_for_user(user['id'], limit=limit)
+        else:
+            scores = database.get_recent_scores(limit=limit)
         response = JSONResponse(content=scores)
 
     if key_row:
@@ -693,6 +793,13 @@ async def scan_token(request: Request):
     if key_error:
         return key_error
 
+    # For browser (non-API-key) access, require user auth
+    user = None
+    if not key_row:
+        user = get_current_user(request)
+        if not user:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+
     # If no API key, fall back to IP-based rate limiting
     if not key_row:
         client_ip = request.client.host if request.client else "unknown"
@@ -748,6 +855,19 @@ async def scan_token(request: Request):
                 status_code=500
             )
         
+        # Associate scan with user if logged in via browser
+        if user and result and result.get("token_mint"):
+            try:
+                conn = database.get_connection()
+                conn.execute(
+                    "UPDATE scored_tokens SET user_id = ? WHERE token_mint = ?",
+                    (user['id'], result["token_mint"])
+                )
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+
         response = JSONResponse(content={"success": True, "result": result})
 
         if key_row:
@@ -888,14 +1008,25 @@ async def settings_page(request: Request):
     """
     Settings page for configuring API keys.
     Shows masked key values only - never full values.
-    Auth is checked client-side; saving requires Bearer token.
+    Requires admin (Google OAuth) or falls back to old token auth if OAuth not configured.
     """
+    user = get_current_user(request)
+    # If Google OAuth is configured, require admin user
+    if os.environ.get("GOOGLE_CLIENT_ID"):
+        if not user or not user.get('is_admin'):
+            return RedirectResponse(url="/", status_code=302)
+    else:
+        # Fallback: old Bearer token auth for dev mode
+        if not _verify_auth(request) and not (user and user.get('is_admin')):
+            return RedirectResponse(url="/", status_code=302)
+
     masked_keys = get_masked_keys()
     return templates.TemplateResponse(
         "settings.html",
         {
             "request": request,
-            "masked_keys": masked_keys
+            "masked_keys": masked_keys,
+            "user": user
         }
     )
 
@@ -1393,28 +1524,28 @@ async def list_api_keys(request: Request):
     return JSONResponse(content={"success": True, "keys": keys, "total": len(keys)})
 
 
-@app.post("/api/auth/verify")
-async def verify_admin(request: Request):
-    """Verify admin token without exposing it in URL."""
-    admin_token = os.environ.get("SCAMHOUND_ADMIN_TOKEN", "")
-    body = await request.json()
-    provided_token = body.get("token", "")
-    if not admin_token or provided_token != admin_token:
-        raise HTTPException(status_code=401, detail="Invalid admin token")
-    return {"status": "authenticated", "role": "admin"}
-
-
 @app.delete("/api/scores/clear")
 async def clear_scores(request: Request):
-    """Clear all scan results from the database. Admin only."""
-    if not _verify_auth(request):
-        return JSONResponse(
-            content={"success": False, "error": "Unauthorized. Admin access required."},
-            status_code=401
-        )
+    """Clear scan results. Admin clears all; regular user clears own."""
+    user = get_current_user(request)
+    if not user:
+        # Fallback to old Bearer token auth (admin only)
+        if not _verify_auth(request):
+            return JSONResponse(
+                content={"success": False, "error": "Unauthorized. Authentication required."},
+                status_code=401
+            )
+        # Old-style admin auth — clear all
+        result = database.clear_all_scores()
+        logger.info(f"[SCAMHOUND] Cleared all scans (admin token): {result}")
+        return JSONResponse(content={"status": "cleared", **result})
 
-    result = database.clear_all_scores()
-    logger.info(f"[SCAMHOUND] Cleared all scans: {result}")
+    if user['is_admin']:
+        result = database.clear_all_scores()
+        logger.info(f"[SCAMHOUND] Cleared all scans by admin {user['email']}: {result}")
+    else:
+        result = database.clear_user_scans(user['id'])
+        logger.info(f"[SCAMHOUND] Cleared user scans for {user['email']}: {result}")
     return JSONResponse(content={"status": "cleared", **result})
 
 
@@ -1424,6 +1555,7 @@ async def startup_event():
     load_config()
     database.init_db()
     database.reset_daily_counters()
+    init_oauth()
 
     # Schedule daily counter reset at midnight UTC
     from apscheduler.triggers.cron import CronTrigger
