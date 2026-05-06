@@ -84,16 +84,15 @@
             color: #484f58;
         }
     </style>
-<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
 </head>
 <body>
-    <a href="/" target="_parent" class="widget widget-risk-{{ token.risk_level.lower() if token and token.risk_level else 'unknown' }}">
+    <a href="https://app.scamhoundcrypto.com/token/{{ token_mint }}" target="_blank" rel="noopener" class="widget widget-risk-{{ token.risk_level.lower() if token and token.risk_level else 'unknown' }}">
         <span class="widget-icon">🐕</span>
         <div class="widget-content">
-            <div class="widget-symbol">${{ token.symbol if token else token_mint[:8] }}</div>
+            <div class="widget-symbol">{{ token.symbol if token and token.symbol else token_mint[:8] + '...' }}</div>
             <div class="widget-score">
-                {% if token %}
-                Risk Score: {{ token.risk_score or '?' }}/100
+                {% if token and token.risk_score is not none %}
+                Risk Score: {{ token.risk_score }}/100
                 {% else %}
                 Not Yet Analyzed
                 {% endif %}
