@@ -196,6 +196,8 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     top1_pct = holders.get("top1_pct", 0)
     top5_pct = holders.get("top5_pct", 0)
     concentration_score = holders.get("concentration_score", "unknown")
+    is_pumpfun = holders.get("is_pumpfun", False)
+    bonding_curve_excluded = holders.get("bonding_curve_excluded", False)
     
     # On-chain data
     wallet_age = token_data.get("wallet_age_days", -1)
@@ -242,6 +244,15 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
         "Scoring should rely on Helius holder data, Birdeye market data, and Bags.fm metadata only. "
         "Do not penalize or reward the absence of BubbleMaps data."
     ) if not has_bubblemaps_data else ""
+    pumpfun_note = ""
+    if is_pumpfun:
+        pumpfun_note = ("\nIMPORTANT: This is a pump.fun token. High initial holder concentration is "
+                        "expected due to the bonding curve mechanism and does NOT indicate rug pull risk "
+                        "by itself. Focus on other risk signals (creator history, wallet clustering, "
+                        "wash trading).")
+        if bonding_curve_excluded:
+            pumpfun_note += ("\nThe bonding curve address has been excluded from holder concentration "
+                            "analysis. The percentages shown reflect real wallet distribution only.")
     decentralization_warning = (
         "(CENTRALIZED - HIGH RISK)" if decentralization_score < 30
         else "(MODERATE RISK)" if decentralization_score < 50
@@ -274,7 +285,7 @@ BAGS.FM DATA:
 - Concentration risk level: {concentration_score}
 - Total holders (estimate): {total_holders}
 - Lifetime trading fees collected: {lifetime_fees} SOL
-- Top holders: {json.dumps(top_holders[:5])}
+- Top holders: {json.dumps(top_holders[:5])}{pumpfun_note}
 
 ON-CHAIN CREATOR HISTORY (Helius):
 - Creator wallet age: {wallet_age} days {new_wallet_warning}

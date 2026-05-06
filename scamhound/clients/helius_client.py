@@ -18,6 +18,32 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://api.helius.xyz/v0"
 RPC_URL = "https://mainnet.helius-rpc.com"
 
+# Known protocol/infrastructure addresses that should NOT be counted as "holders"
+# These are bonding curves, DEX pools, AMM vaults, and system programs
+EXCLUDED_HOLDER_ADDRESSES = {
+    # Pump.fun
+    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",  # Pump.fun program
+    "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbCfM35SxDDdCB",  # Pump.fun fee account
+    "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg",  # Pump.fun authority
+
+    # Raydium
+    "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",  # Raydium AMM authority
+    "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",  # Raydium CP AMM
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium V4 AMM
+    "routeUGWgWzqBWFcrCfv8tritsqukccJPu3q5GPP3xS",   # Raydium route
+
+    # System programs
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",   # Token program
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",  # Associated token program
+    "11111111111111111111111111111111",                 # System program
+
+    # Orca/Whirlpool
+    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",   # Orca Whirlpool
+
+    # Meteora
+    "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",  # Meteora DLMM
+}
+
 
 def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
     """Make a request to the Helius API."""
@@ -288,7 +314,7 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
             return None
         
         # Process holder accounts
-        top_holders = []
+        all_holders = []
         for account in accounts[:limit]:
             address = account.get("address", "")
             # Amount is in raw token units, convert to actual tokens
@@ -296,11 +322,36 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
             balance = raw_balance / (10 ** decimals) if decimals > 0 else raw_balance
             percentage = (raw_balance / total_supply) * 100 if total_supply > 0 else 0
             
-            top_holders.append({
+            all_holders.append({
                 "address": address,
                 "balance": balance,
                 "percentage": round(percentage, 2)
             })
+        
+        # Filter out known protocol/infrastructure addresses
+        filtered_holders = [
+            h for h in all_holders
+            if h.get("address") not in EXCLUDED_HOLDER_ADDRESSES
+        ]
+        excluded_count = len(all_holders) - len(filtered_holders)
+        if excluded_count > 0:
+            logger.debug(f"[HELIUS] Excluded {excluded_count} protocol addresses from holder analysis")
+        
+        # Detect pump.fun tokens and handle bonding curve
+        is_pumpfun = token_mint.endswith("pump")
+        bonding_curve_excluded = False
+        
+        if is_pumpfun and filtered_holders:
+            # The largest holder on a pump.fun token in bonding phase is almost always
+            # the bonding curve PDA. Exclude if it holds > 70% of supply.
+            top_holder = filtered_holders[0]
+            if top_holder.get("percentage", 0) > 70:
+                logger.info(f"[HELIUS] Pump.fun bonding curve detected ({top_holder['percentage']:.1f}%), excluding from concentration calc")
+                filtered_holders = filtered_holders[1:]
+                bonding_curve_excluded = True
+        
+        # Use filtered holders for concentration metrics
+        top_holders = filtered_holders
         
         # Calculate concentration metrics
         top1_pct = top_holders[0]["percentage"] if len(top_holders) >= 1 else 0
@@ -323,7 +374,8 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
         
         logger.info(f"[HELIUS] Holder analysis for {token_mint[:8]}...: "
                    f"top1={top1_pct:.1f}%, top5={top5_pct:.1f}%, top10={top10_pct:.1f}%, "
-                   f"concentration={concentration_score}")
+                   f"concentration={concentration_score}"
+                   f"{' (pump.fun, bonding curve excluded)' if bonding_curve_excluded else ''}")
         
         return {
             "top_holders": top_holders,
@@ -331,7 +383,9 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
             "concentration_score": concentration_score,
             "top1_pct": round(top1_pct, 2),
             "top5_pct": round(top5_pct, 2),
-            "top10_pct": round(top10_pct, 2)
+            "top10_pct": round(top10_pct, 2),
+            "is_pumpfun": is_pumpfun,
+            "bonding_curve_excluded": bonding_curve_excluded
         }
         
     except requests.exceptions.Timeout:
