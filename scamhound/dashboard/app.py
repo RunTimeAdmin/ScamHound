@@ -291,16 +291,20 @@ async def token_detail(request: Request, token_mint: str):
             {
                 "request": request,
                 "token": None,
+                "score_history": [],
                 "error": "Token not found"
             },
             status_code=404
         )
     
+    score_history = database.get_score_history(token_mint)
+    
     return templates.TemplateResponse(
         "token_detail.html",
         {
             "request": request,
-            "token": token
+            "token": token,
+            "score_history": score_history
         }
     )
 
@@ -757,6 +761,95 @@ async def scan_token(request: Request):
             content={"success": False, "error": str(e)},
             status_code=500
         )
+
+
+@app.post("/api/scan/batch")
+async def api_scan_batch(request: Request):
+    """Batch scan up to 50 token mints. Requires Builder tier or higher API key.
+    
+    Body: {"mints": ["mint1", "mint2", ...]}
+    
+    Returns cached scores immediately for already-scored tokens.
+    Triggers fresh scans for unknown tokens (async, non-blocking).
+    
+    Rate cost: 1 batch request = 10 regular API call units.
+    """
+    # 1. Check API key — require Builder tier or higher
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+    if not key_row:
+        return JSONResponse(status_code=401, content={"error": "API key required. Batch scanning requires Builder tier."})
+    if key_row["tier"] not in ("builder", "enterprise"):
+        return JSONResponse(status_code=403, content={"error": "Batch scan requires Builder tier or higher"})
+    
+    # 2. Parse body
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    
+    mints = body.get("mints", [])
+    
+    if not isinstance(mints, list):
+        return JSONResponse(status_code=400, content={"error": "mints must be an array"})
+    if len(mints) == 0:
+        return JSONResponse(status_code=400, content={"error": "mints array cannot be empty"})
+    if len(mints) > 50:
+        return JSONResponse(status_code=400, content={"error": "Maximum 50 mints per batch"})
+    
+    # Validate each mint is a string
+    mints = [m.strip() for m in mints if isinstance(m, str) and m.strip()]
+    if not mints:
+        return JSONResponse(status_code=400, content={"error": "No valid mint addresses provided"})
+    
+    # 3. Charge 10 API call units for the batch
+    database.increment_api_key_usage(key_row["id"], "/api/scan/batch", count=10)
+    
+    # 4. Process: return cached scores, queue fresh scans for unknowns
+    results = []
+    to_scan = []
+    
+    for mint in mints:
+        # Check if already scored
+        existing = database.get_score_by_mint(mint)
+        if existing:
+            results.append({
+                "token_mint": mint,
+                "status": "cached",
+                "data": existing
+            })
+        else:
+            to_scan.append(mint)
+            results.append({
+                "token_mint": mint,
+                "status": "queued",
+                "data": None
+            })
+    
+    # 5. Trigger background scans for unknown tokens (non-blocking)
+    if to_scan:
+        import asyncio
+        async def _background_scan(mint_list):
+            for mint in mint_list:
+                try:
+                    await monitor.scan_single_token_async(mint, skip_if_scored=False)
+                except Exception:
+                    pass
+        
+        asyncio.create_task(_background_scan(to_scan))
+    
+    # 6. Return response
+    response = JSONResponse(content={
+        "results": results,
+        "total": len(mints),
+        "cached": len(mints) - len(to_scan),
+        "queued": len(to_scan),
+        "message": f"{len(to_scan)} tokens queued for scanning. Check back in 30-60 seconds for results." if to_scan else "All tokens found in cache."
+    })
+    
+    response = _add_rate_limit_headers(response, key_row)
+    return response
 
 
 @app.get("/health")

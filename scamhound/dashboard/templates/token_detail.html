@@ -49,6 +49,17 @@
             <p><span class="disclaimer-icon">⚠️</span>This score is for informational purposes only. Some token structures may appear high-risk for legitimate reasons (treasuries, marketing allocations, vesting). Always review the token's official documentation before making decisions.</p>
         </div>
 
+        <div class="verify-links-section">
+            <h3>🔗 Verify On-Chain</h3>
+            <div class="verify-links">
+                <a href="https://solscan.io/token/{{ token.token_mint }}" target="_blank" rel="noopener noreferrer" class="verify-link">🔍 Solscan</a>
+                <a href="https://birdeye.so/token/{{ token.token_mint }}?chain=solana" target="_blank" rel="noopener noreferrer" class="verify-link">🦅 Birdeye</a>
+                <a href="https://dexscreener.com/solana/{{ token.token_mint }}" target="_blank" rel="noopener noreferrer" class="verify-link">📊 DexScreener</a>
+                <a href="https://app.bubblemaps.io/sol/token/{{ token.token_mint }}" target="_blank" rel="noopener noreferrer" class="verify-link">🫧 BubbleMaps</a>
+                <a href="https://explorer.solana.com/address/{{ token.token_mint }}" target="_blank" rel="noopener noreferrer" class="verify-link">⛓️ Solana Explorer</a>
+            </div>
+        </div>
+
         <div class="verdict-box risk-border-{{ token.risk_level.lower() if token.risk_level else 'unknown' }}">
             <h3>🤖 AI Verdict</h3>
             <p>{{ token.ai_verdict or 'No analysis available.' }}</p>
@@ -173,6 +184,33 @@
             <code class="embed-code">
                 <iframe src="https://your-domain.com/widget/{{ token.token_mint }}" width="300" height="80" frameborder="0"></iframe>
             </code>
+        </div>
+
+        <div class="score-history-section">
+            <h3>📈 Risk Score History</h3>
+            {% if score_history|length <= 1 %}
+            <p class="score-history-single">First scored {{ token.scored_at or 'recently' }}. Re-scoring happens automatically within 7 days for tokens with risk &ge; 40.</p>
+            {% else %}
+            <div class="score-timeline">
+                {% for entry in score_history|reverse %}
+                <div class="timeline-entry">
+                    <div class="timeline-bar risk-{{ entry.risk_level|lower }}" style="height: {{ entry.risk_score }}%;"></div>
+                    <div class="timeline-score">{{ entry.risk_score }}</div>
+                    <div class="timeline-label">{{ entry.scored_at[:10] if entry.scored_at else '' }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="score-change-summary">
+                {% set change = score_history[0].risk_score - score_history[-1].risk_score %}
+                {% if change > 0 %}
+                    <span class="score-increased">⬆ Score increased by {{ change }} points since first scan</span>
+                {% elif change < 0 %}
+                    <span class="score-decreased">⬇ Score decreased by {{ change|abs }} points since first scan</span>
+                {% else %}
+                    <span class="score-stable">→ Score unchanged since first scan</span>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
 
         <div class="detail-section timestamps">

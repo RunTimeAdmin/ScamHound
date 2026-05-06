@@ -399,6 +399,10 @@ def get_token_score(token_mint: str) -> Optional[Dict[str, Any]]:
     return result
 
 
+# Alias for batch scan endpoint
+get_score_by_mint = get_token_score
+
+
 def get_high_risk_unnotified(threshold: int = 65) -> List[Dict[str, Any]]:
     """Get high-risk tokens that haven't been tweeted yet."""
     conn = get_connection()
@@ -806,7 +810,7 @@ def validate_api_key(raw_key: str) -> Optional[dict]:
         conn.close()
 
 
-def increment_api_key_usage(key_id: int, endpoint: str, status_code: int = 200, response_ms: int = 0):
+def increment_api_key_usage(key_id: int, endpoint: str, status_code: int = 200, response_ms: int = 0, count: int = 1):
     """Increment usage counters and log the request."""
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
@@ -820,13 +824,13 @@ def increment_api_key_usage(key_id: int, endpoint: str, status_code: int = 200, 
 
         if row and row["last_reset_date"] != today:
             conn.execute(
-                "UPDATE api_keys SET calls_today = 1, calls_total = calls_total + 1, last_used_at = ?, last_reset_date = ? WHERE id = ?",
-                (now.isoformat(), today, key_id)
+                "UPDATE api_keys SET calls_today = ?, calls_total = calls_total + ?, last_used_at = ?, last_reset_date = ? WHERE id = ?",
+                (count, count, now.isoformat(), today, key_id)
             )
         else:
             conn.execute(
-                "UPDATE api_keys SET calls_today = calls_today + 1, calls_total = calls_total + 1, last_used_at = ? WHERE id = ?",
-                (now.isoformat(), key_id)
+                "UPDATE api_keys SET calls_today = calls_today + ?, calls_total = calls_total + ?, last_used_at = ? WHERE id = ?",
+                (count, count, now.isoformat(), key_id)
             )
 
         # Log usage

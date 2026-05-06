@@ -2672,3 +2672,60 @@ textarea::placeholder {
     }
 }
 
+/* ==========================================================================
+   Verify On-Chain Links
+   ========================================================================== */
+.verify-links-section { margin: 20px 0; }
+.verify-links-section h3 { margin-bottom: 12px; color: var(--text-primary); font-size: 1rem; }
+.verify-links { display: flex; gap: 12px; flex-wrap: wrap; }
+.verify-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 6px;
+    background: var(--bg-secondary); border: 1px solid var(--border-primary);
+    color: #a0c4ff; text-decoration: none; font-size: 0.85rem;
+    transition: all 0.2s;
+}
+.verify-link:hover { background: var(--bg-tertiary); border-color: #4a6a9c; color: #fff; }
+
+/* ==========================================================================
+   Score History Timeline
+   ========================================================================== */
+.score-history-section {
+    margin: 30px 0; padding: 20px;
+    background: var(--bg-secondary); border-radius: 8px;
+    border: 1px solid var(--border-primary);
+}
+.score-history-section h3 { margin-bottom: 16px; color: var(--text-primary); font-size: 1rem; }
+.score-history-single { color: var(--text-secondary); font-size: 0.9rem; }
+.score-timeline {
+    display: flex; align-items: flex-end; gap: 8px;
+    height: 150px; padding: 10px 0;
+    border-bottom: 1px solid var(--border-primary);
+    background: repeating-linear-gradient(
+        to top,
+        transparent,
+        transparent 24%,
+        rgba(255,255,255,0.03) 24%,
+        rgba(255,255,255,0.03) 25%
+    );
+}
+.timeline-entry {
+    display: flex; flex-direction: column; align-items: center;
+    flex: 1; min-width: 40px;
+}
+.timeline-bar {
+    width: 100%; max-width: 30px; border-radius: 4px 4px 0 0;
+    min-height: 4px; transition: height 0.3s;
+}
+.timeline-bar.risk-low { background: #4caf50; }
+.timeline-bar.risk-medium { background: #ff9800; }
+.timeline-bar.risk-high { background: #f44336; }
+.timeline-bar.risk-critical { background: #9c27b0; }
+.timeline-label { font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; }
+.timeline-score { font-size: 0.8rem; font-weight: bold; color: var(--text-primary); margin-top: 6px; }
+
+.score-change-summary { margin-top: 12px; font-size: 0.9rem; }
+.score-increased { color: #f44336; }
+.score-decreased { color: #4caf50; }
+.score-stable { color: var(--text-secondary); }
+
