@@ -7,6 +7,7 @@ import sqlite3
 import os
 import json
 import hashlib
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
@@ -105,6 +106,22 @@ def init_db() -> None:
         )
     """)
 
+    # User Watchlist table (Pro+ tier personal watchlists)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_id INTEGER NOT NULL,
+            wallet_address TEXT NOT NULL,
+            label TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            added_at TEXT NOT NULL,
+            last_seen_at TEXT DEFAULT NULL,
+            alert_count INTEGER DEFAULT 0,
+            FOREIGN KEY (key_id) REFERENCES api_keys(id),
+            UNIQUE(key_id, wallet_address)
+        )
+    """)
+
     conn.commit()
 
     # Create indexes for common queries
@@ -114,10 +131,110 @@ def init_db() -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_email ON api_keys(email)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_key_date ON api_usage_log(key_id, logged_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_level_scored ON scored_tokens(risk_level, scored_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbol ON scored_tokens(symbol)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_watchlist_key ON user_watchlist(key_id)")
     
     conn.commit()
     conn.close()
     print("[SCAMHOUND] Database initialized")
+
+
+def search_scored_tokens(
+    search: str = None,
+    risk_level: str = None,
+    min_score: int = None,
+    max_score: int = None,
+    creator: str = None,
+    from_date: str = None,
+    to_date: str = None,
+    sort_by: str = "scored_at",
+    order: str = "desc",
+    page: int = 1,
+    per_page: int = 50
+) -> Dict[str, Any]:
+    """Search and filter scored tokens with pagination.
+    
+    Returns:
+        {"tokens": [...], "total": int, "page": int, "per_page": int, "pages": int}
+    """
+    # Validate sort_by and order against whitelists
+    allowed_sort = {"scored_at", "risk_score", "symbol", "name"}
+    allowed_order = {"asc", "desc"}
+    if sort_by not in allowed_sort:
+        sort_by = "scored_at"
+    if order not in allowed_order:
+        order = "desc"
+
+    conditions = []
+    params = []
+
+    if search:
+        conditions.append("(name LIKE ? OR symbol LIKE ? OR token_mint LIKE ?)")
+        like_val = f"%{search}%"
+        params.extend([like_val, like_val, like_val])
+
+    if risk_level:
+        conditions.append("risk_level = ?")
+        params.append(risk_level)
+
+    if min_score is not None:
+        conditions.append("risk_score >= ?")
+        params.append(min_score)
+
+    if max_score is not None:
+        conditions.append("risk_score <= ?")
+        params.append(max_score)
+
+    if creator:
+        conditions.append("creator_wallet LIKE ?")
+        params.append(f"%{creator}%")
+
+    if from_date:
+        conditions.append("scored_at >= ?")
+        params.append(from_date)
+
+    if to_date:
+        conditions.append("scored_at <= ?")
+        params.append(to_date)
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Get total count
+    count_sql = f"SELECT COUNT(*) as total FROM scored_tokens {where_clause}"
+    cursor.execute(count_sql, params)
+    total = cursor.fetchone()["total"]
+
+    # Calculate pagination
+    offset = (page - 1) * per_page
+    pages = math.ceil(total / per_page) if per_page > 0 else 0
+
+    # Fetch paginated results
+    query_sql = f"SELECT * FROM scored_tokens {where_clause} ORDER BY {sort_by} {order} LIMIT ? OFFSET ?"
+    cursor.execute(query_sql, params + [per_page, offset])
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        result = dict(row)
+        result["top_risk_factors"] = json.loads(result.get("top_risk_factors", "[]"))
+        result["top_safe_signals"] = json.loads(result.get("top_safe_signals", "[]"))
+        results.append(result)
+
+    return {
+        "tokens": results,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pages
+    }
 
 
 def token_already_scored(token_mint: str) -> bool:
@@ -389,6 +506,85 @@ def update_watchlist_seen(wallet_address: str) -> bool:
     conn.close()
     
     return updated
+
+
+# ============================================================================
+# User Watchlist Functions (Pro+ tier)
+# ============================================================================
+
+def add_to_user_watchlist(key_id: int, wallet_address: str, label: str = "", notes: str = "") -> bool:
+    """Add a wallet to a user's personal watchlist. Returns True if added, False if already exists."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO user_watchlist (key_id, wallet_address, label, notes, added_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (key_id, wallet_address, label, notes, datetime.now().isoformat()))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def remove_from_user_watchlist(key_id: int, wallet_address: str) -> bool:
+    """Remove a wallet from a user's personal watchlist. Returns True if removed."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM user_watchlist WHERE key_id = ? AND wallet_address = ?", (key_id, wallet_address))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    
+    return deleted
+
+
+def get_user_watchlist(key_id: int) -> List[Dict[str, Any]]:
+    """Get all watchlist entries for a specific API key user. ORDER BY added_at DESC."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM user_watchlist
+        WHERE key_id = ?
+        ORDER BY added_at DESC
+    """, (key_id,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+
+def is_user_watched_wallet(key_id: int, wallet_address: str) -> bool:
+    """Check if a wallet is on a user's watchlist."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT 1 FROM user_watchlist WHERE key_id = ? AND wallet_address = ?", (key_id, wallet_address))
+    result = cursor.fetchone()
+    conn.close()
+    
+    return result is not None
+
+
+def update_user_watchlist_seen(key_id: int, wallet_address: str):
+    """Update last_seen_at and increment alert_count for a user's watched wallet."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE user_watchlist
+        SET last_seen_at = ?, alert_count = alert_count + 1
+        WHERE key_id = ? AND wallet_address = ?
+    """, (datetime.now().isoformat(), key_id, wallet_address))
+    
+    conn.commit()
+    conn.close()
 
 
 # ============================================================================

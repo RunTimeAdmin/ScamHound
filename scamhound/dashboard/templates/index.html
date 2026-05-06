@@ -142,6 +142,36 @@
             <span id="toast-message"></span>
         </div>
 
+        <!-- Filter/Search Bar -->
+        <div id="filter-bar" class="filter-bar">
+            <div class="filter-bar-inner">
+                <div class="filter-input-group">
+                    <input type="text" id="filter-search" class="filter-input" placeholder="Search by name, symbol, or mint address...">
+                    <span id="pro-hint" class="pro-hint" style="display:none" title="Pro feature — get an API key for advanced search">🔒</span>
+                </div>
+                <select id="filter-risk-level" class="filter-select">
+                    <option value="">All Levels</option>
+                    <option value="LOW">LOW</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="HIGH">HIGH</option>
+                    <option value="CRITICAL">CRITICAL</option>
+                </select>
+                <select id="filter-sort" class="filter-select">
+                    <option value="scored_at|desc">Most Recent</option>
+                    <option value="risk_score|desc">Highest Risk</option>
+                    <option value="risk_score|asc">Lowest Risk</option>
+                    <option value="name|asc">Name A-Z</option>
+                </select>
+                <button class="filter-apply-btn" onclick="applyFilters()">Search</button>
+                <button class="filter-clear-btn" onclick="clearFilters()">Clear</button>
+            </div>
+        </div>
+
+        <!-- New tokens while filtering notification -->
+        <div id="filter-new-tokens-notice" class="filter-new-tokens-notice" style="display:none;">
+            <span id="filter-new-count">0</span> new tokens scored while filtering. <a href="#" onclick="clearFilters(); return false;">Clear filters to see latest.</a>
+        </div>
+
         <div class="token-table-container">
             <table class="token-table">
                 <thead>
@@ -210,6 +240,13 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div id="pagination-controls" class="pagination-controls" style="display:none;">
+            <button id="pagination-prev" class="pagination-btn" onclick="goToPage(currentPage - 1)" disabled>&laquo; Previous</button>
+            <span id="pagination-info" class="pagination-info">Page 1 of 1 (0 total tokens)</span>
+            <button id="pagination-next" class="pagination-btn" onclick="goToPage(currentPage + 1)" disabled>Next &raquo;</button>
         </div>
     </main>
 
@@ -315,6 +352,130 @@
             }
         });
 
+        // Allow Enter key in filter search
+        document.getElementById('filter-search').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                applyFilters();
+            }
+        });
+
+        // --- Filter, Search & Pagination ---
+        let currentPage = 1;
+        let currentFilters = {};
+        let isFiltering = false;
+        let newTokensWhileFiltering = 0;
+
+        function applyFilters() {
+            const search = document.getElementById('filter-search').value.trim();
+            const riskLevel = document.getElementById('filter-risk-level').value;
+            const sortVal = document.getElementById('filter-sort').value;
+            const [sort_by, order] = sortVal.split('|');
+
+            currentFilters = {};
+            if (search) currentFilters.search = search;
+            if (riskLevel) currentFilters.risk_level = riskLevel;
+            currentFilters.sort_by = sort_by;
+            currentFilters.order = order;
+
+            isFiltering = true;
+            newTokensWhileFiltering = 0;
+            document.getElementById('filter-new-tokens-notice').style.display = 'none';
+            fetchFilteredScores(1);
+        }
+
+        async function fetchFilteredScores(page) {
+            currentPage = page;
+            const params = new URLSearchParams({ page: page });
+            if (currentFilters.search) params.set('search', currentFilters.search);
+            if (currentFilters.risk_level) params.set('risk_level', currentFilters.risk_level);
+            if (currentFilters.sort_by) params.set('sort_by', currentFilters.sort_by);
+            if (currentFilters.order) params.set('order', currentFilters.order);
+
+            const headers = {};
+            const apiKey = localStorage.getItem('scamhound_admin_token');
+            if (apiKey) headers['X-API-Key'] = apiKey;
+
+            try {
+                const response = await fetch('/api/scores?' + params.toString(), { headers });
+                const data = await response.json();
+                renderTokenTable(data.tokens || []);
+                updatePagination(data.page || 1, data.pages || 1, data.total || 0);
+            } catch (e) {
+                console.error('Failed to fetch filtered scores:', e);
+                showToast('Failed to fetch results. Please try again.', 'error');
+            }
+        }
+
+        function renderTokenTable(tokens) {
+            const tbody = document.querySelector('.token-table tbody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            if (tokens.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No tokens match your filters.</td></tr>';
+                return;
+            }
+
+            tokens.forEach(token => {
+                const riskClass = 'risk-' + (token.risk_level ? token.risk_level.toLowerCase() : 'unknown');
+                const symbol = token.symbol || '???';
+                const name = token.name || 'Unknown';
+                const score = token.risk_score || 0;
+                const riskLevel = token.risk_level || 'UNKNOWN';
+                const creator = token.creator_username;
+                const concentration = token.top_10_concentration;
+                const walletAge = token.wallet_age_days;
+                const verdict = (token.ai_verdict || '').substring(0, 60);
+                const verdictTruncated = (token.ai_verdict || '').length > 60 ? '...' : '';
+                const scoredAt = token.scored_at ? token.scored_at.substring(0, 16) : '\u2014';
+                const tokenMint = token.token_mint || '';
+
+                const tr = document.createElement('tr');
+                tr.className = riskClass;
+                tr.innerHTML = `
+                    <td><a href="/token/${tokenMint}"><strong>${symbol}</strong><span class="token-name">${name}</span></a></td>
+                    <td><span class="score-badge">${score}</span></td>
+                    <td><span class="risk-badge ${riskClass}">${riskLevel}</span></td>
+                    <td>${creator ? `<span class="creator">@${creator}</span>` : '<span class="creator-muted">Unknown</span>'}</td>
+                    <td>${concentration ? concentration.toFixed(1) + '%' : '\u2014'}</td>
+                    <td>${walletAge !== null && walletAge >= 0 ? walletAge + 'd' : '\u2014'}</td>
+                    <td class="verdict-cell">${verdict}${verdictTruncated}</td>
+                    <td class="time-cell">${scoredAt}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updatePagination(page, pages, total) {
+            const container = document.getElementById('pagination-controls');
+            const prevBtn = document.getElementById('pagination-prev');
+            const nextBtn = document.getElementById('pagination-next');
+            const info = document.getElementById('pagination-info');
+
+            container.style.display = 'flex';
+            info.textContent = `Page ${page} of ${pages} (${total} total tokens)`;
+            prevBtn.disabled = (page <= 1);
+            nextBtn.disabled = (page >= pages);
+        }
+
+        function clearFilters() {
+            document.getElementById('filter-search').value = '';
+            document.getElementById('filter-risk-level').value = '';
+            document.getElementById('filter-sort').value = 'scored_at|desc';
+            isFiltering = false;
+            newTokensWhileFiltering = 0;
+            document.getElementById('filter-new-tokens-notice').style.display = 'none';
+            document.getElementById('pagination-controls').style.display = 'none';
+            // Reload page to restore server-rendered view
+            window.location.reload();
+        }
+
+        function goToPage(page) {
+            if (page < 1) return;
+            currentPage = page;
+            fetchFilteredScores(page);
+        }
+
         // Auto-scan toggle functionality
         let autoscanToggling = false;
         let adminToken = null;
@@ -412,6 +573,11 @@
                 history.replaceState(null, '', cleanUrl);
             }
             const storedToken = localStorage.getItem('scamhound_admin_token');
+            // Show pro hint if no admin token
+            if (!storedToken) {
+                const proHint = document.getElementById('pro-hint');
+                if (proHint) proHint.style.display = 'inline';
+            }
             if (storedToken) {
                 adminToken = storedToken;
                 // Show settings link
@@ -433,6 +599,11 @@
                 const bulkNotice = document.getElementById('bulk-scan-notice');
                 if (bulkNotice) {
                     bulkNotice.style.display = 'none';
+                }
+                // Hide pro hint for admins
+                const proHint = document.getElementById('pro-hint');
+                if (proHint) {
+                    proHint.style.display = 'none';
                 }
                 // Load auto-scan status now that banner is visible
                 loadAutoscanStatus();
@@ -516,6 +687,16 @@
             }
             
             function addTokenToTable(token) {
+                // If filtering, don't insert — show notification instead
+                if (isFiltering) {
+                    newTokensWhileFiltering++;
+                    const notice = document.getElementById('filter-new-tokens-notice');
+                    const countEl = document.getElementById('filter-new-count');
+                    countEl.textContent = newTokensWhileFiltering;
+                    notice.style.display = 'block';
+                    return;
+                }
+
                 const tbody = document.querySelector('.token-table tbody');
                 if (!tbody) return;
                 
