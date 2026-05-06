@@ -1,10 +1,12 @@
 """
 ScamHound Scoring Engine
-Uses Claude AI to analyze token data and generate risk scores
+Uses LLM AI to analyze token data and generate risk scores.
+Supports multiple providers: Anthropic Claude (default) and DeepSeek.
 """
 
 import json
 import logging
+import os
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -17,6 +19,10 @@ logger = logging.getLogger(__name__)
 _anthropic_client = None
 _anthropic_client_key = None
 
+# DeepSeek client singleton
+_deepseek_client = None
+_deepseek_api_key = None
+
 
 def _get_anthropic_client():
     """Get or create Anthropic client singleton."""
@@ -27,6 +33,77 @@ def _get_anthropic_client():
         _anthropic_client = anthropic.Anthropic(api_key=key)
         _anthropic_client_key = key
     return _anthropic_client
+
+
+def _get_deepseek_client():
+    """Get or create DeepSeek client (OpenAI-compatible)."""
+    global _deepseek_client, _deepseek_api_key
+
+    current_key = os.environ.get("DEEPSEEK_API_KEY", "")
+
+    if _deepseek_client is None or current_key != _deepseek_api_key:
+        if not current_key:
+            return None
+        from openai import OpenAI
+        _deepseek_client = OpenAI(
+            api_key=current_key,
+            base_url="https://api.deepseek.com"
+        )
+        _deepseek_api_key = current_key
+
+    return _deepseek_client
+
+
+def _call_llm(system_prompt: str, user_prompt: str) -> str:
+    """Call the configured LLM provider and return the response text."""
+    provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+
+    if provider == "deepseek":
+        return _call_deepseek(system_prompt, user_prompt)
+    else:
+        return _call_anthropic(system_prompt, user_prompt)
+
+
+def _call_deepseek(system_prompt: str, user_prompt: str) -> str:
+    """Call DeepSeek API (OpenAI-compatible)."""
+    client = _get_deepseek_client()
+    if not client:
+        raise ValueError("DEEPSEEK_API_KEY not configured")
+
+    model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        temperature=0.1,
+        max_tokens=1000,
+        response_format={"type": "json_object"}
+    )
+
+    return response.choices[0].message.content
+
+
+def _call_anthropic(system_prompt: str, user_prompt: str) -> str:
+    """Call Anthropic Claude API."""
+    client = _get_anthropic_client()
+    if not client:
+        raise ValueError("ANTHROPIC_API_KEY not configured")
+
+    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=1000,
+        system=system_prompt,
+        messages=[
+            {"role": "user", "content": user_prompt}
+        ]
+    )
+
+    return response.content[0].text
 
 
 
@@ -226,32 +303,32 @@ Respond with JSON only."""
 
 def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Calculate risk score using Claude AI.
+    Calculate risk score using the configured LLM provider.
     
     Returns a complete score dict with all fields needed for database.
     """
-    client = _get_anthropic_client()
-    if not client:
-        logger.error("[SCAMHOUND] Anthropic API key not configured")
-        return _fallback_score(token_data, "API key not configured")
+    provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    logger.info(f"[SCORER] Using LLM provider: {provider}")
+
+    # Verify the selected provider has credentials
+    if provider == "deepseek":
+        if not os.environ.get("DEEPSEEK_API_KEY"):
+            logger.error("[SCAMHOUND] DEEPSEEK_API_KEY not configured")
+            return _fallback_score(token_data, "API key not configured")
+    else:
+        client = _get_anthropic_client()
+        if not client:
+            logger.error("[SCAMHOUND] Anthropic API key not configured")
+            return _fallback_score(token_data, "API key not configured")
     
     user_prompt = build_user_prompt(token_data)
     
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            messages=[
-                {"role": "user", "content": user_prompt}
-            ]
-        )
-        
-        # Parse the response
-        response_text = message.content[0].text.strip()
+        response_text = _call_llm(SYSTEM_PROMPT, user_prompt)
+        response_text = response_text.strip()
         
         # Try to parse JSON from the response
-        # Sometimes Claude might add markdown code blocks
+        # Sometimes LLMs might add markdown code blocks
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0].strip()
         elif "```" in response_text:
@@ -281,21 +358,21 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
             "token_status": token_data.get("token_status", "unknown"),
             "scored_at": datetime.utcnow().isoformat(),
             "created_at": token_data.get("created_at"),
-            "score_source": "ai"
+            "score_source": f"ai_{provider}"
         }
         
-        logger.info(f"[SCAMHOUND] {score_data['symbol']} | Score: {score_data['risk_score']} | {score_data['risk_level']}")
+        logger.info(f"[SCAMHOUND] {score_data['symbol']} | Score: {score_data['risk_score']} | {score_data['risk_level']} | Provider: {provider}")
         
         return score_data
         
-    except anthropic.APIError as e:
-        logger.error(f"[SCAMHOUND] Claude API error: {e}")
+    except (anthropic.APIError, ValueError) as e:
+        logger.error(f"[SCAMHOUND] LLM API error ({provider}): {e}")
         return _fallback_score(token_data, "API error")
     except json.JSONDecodeError as e:
         logger.error(f"[SCAMHOUND] JSON parse error: {e}")
         return _fallback_score(token_data, "Parse error")
     except Exception as e:
-        logger.error(f"[SCAMHOUND] Unexpected error: {e}")
+        logger.error(f"[SCAMHOUND] Unexpected error ({provider}): {e}")
         return _fallback_score(token_data, "Unknown error")
 
 
