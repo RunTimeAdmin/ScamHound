@@ -246,6 +246,37 @@ async def watchlist_page(request: Request):
     )
 
 
+@app.get("/leaderboard", response_class=HTMLResponse)
+async def leaderboard_page(request: Request):
+    """Creator reputation leaderboard page."""
+    leaderboard = database.get_creator_leaderboard(sort_by="avg_risk", order="desc", limit=50, min_tokens=2)
+    stats = database.get_stats()
+    return templates.TemplateResponse("leaderboard.html", {"request": request, "leaderboard": leaderboard, "stats": stats})
+
+
+@app.get("/api/leaderboard")
+async def api_leaderboard(request: Request, sort_by: str = "avg_risk", order: str = "desc", limit: int = 50, min_tokens: int = 2):
+    """Get creator reputation leaderboard."""
+    valid_sorts = ["avg_risk", "total_tokens", "high_risk_count", "last_active"]
+    if sort_by not in valid_sorts:
+        return JSONResponse(status_code=400, content={"error": f"Invalid sort_by. Must be one of: {valid_sorts}"})
+    if order not in ["asc", "desc"]:
+        return JSONResponse(status_code=400, content={"error": "Invalid order. Must be 'asc' or 'desc'"})
+    
+    leaderboard = database.get_creator_leaderboard(sort_by=sort_by, order=order, limit=min(limit, 100), min_tokens=min_tokens)
+    
+    # Track API key usage if present
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+    
+    response = JSONResponse(content={"leaderboard": leaderboard, "count": len(leaderboard)})
+    if key_row:
+        database.increment_api_key_usage(key_row["id"], "/api/leaderboard")
+        response = _add_rate_limit_headers(response, key_row)
+    return response
+
+
 @app.get("/token/{token_mint}", response_class=HTMLResponse)
 async def token_detail(request: Request, token_mint: str):
     """
@@ -398,6 +429,46 @@ async def api_score(request: Request, token_mint: str):
         response = _add_rate_limit_headers(response, key_row)
 
     return response
+
+
+@app.get("/api/score/{token_mint}/history")
+async def api_score_history(request: Request, token_mint: str):
+    """Get score history for a token. Shows how risk score evolved over time."""
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+
+    history = database.get_score_history(token_mint)
+
+    if not history:
+        return JSONResponse(status_code=404, content={"error": "No score history found for this token"})
+
+    response_data = {
+        "token_mint": token_mint,
+        "scores": history,
+        "total_scores": len(history),
+        "score_change": history[0]["risk_score"] - history[-1]["risk_score"] if len(history) > 1 else 0
+    }
+
+    response = JSONResponse(content=response_data)
+
+    if key_row:
+        database.increment_api_key_usage(key_row["id"], f"/api/score/{token_mint}/history")
+        response = _add_rate_limit_headers(response, key_row)
+
+    return response
+
+
+@app.get("/api/rescore/status")
+async def api_rescore_status(request: Request):
+    """Get info about the re-scoring system."""
+    eligible = database.get_tokens_for_rescore(max_age_days=7, min_score=40, limit=100)
+    return JSONResponse(content={
+        "eligible_for_rescore": len(eligible),
+        "rescore_interval_hours": 24,
+        "min_score_threshold": 40,
+        "max_age_days": 7
+    })
 
 
 @app.get("/api/stats")
@@ -1230,6 +1301,19 @@ async def startup_event():
     )
     _daily_reset_scheduler.start()
     logger.info("[SCAMHOUND] Daily API key counter reset scheduled at UTC midnight")
+
+    # Add re-score job - runs every 24 hours
+    from engine.monitor import run_rescore_cycle
+    _rescore_scheduler = BackgroundScheduler()
+    _rescore_scheduler.add_job(
+        run_rescore_cycle,
+        trigger=IntervalTrigger(hours=24),
+        id='rescore_cycle',
+        name='ScamHound Re-Score Cycle',
+        replace_existing=True
+    )
+    _rescore_scheduler.start()
+    logger.info("[SCAMHOUND] Re-score scheduler started (interval: 24h)")
     
     # Register WebSocket broadcast callback with monitor
     # This allows monitor to broadcast new scores without circular imports

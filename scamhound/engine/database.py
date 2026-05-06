@@ -134,6 +134,21 @@ def init_db() -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_level_scored ON scored_tokens(risk_level, scored_at DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbol ON scored_tokens(symbol)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_watchlist_key ON user_watchlist(key_id)")
+
+    # Score history table for tracking score changes over time
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS score_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_mint TEXT NOT NULL,
+            risk_score INTEGER NOT NULL,
+            risk_level TEXT NOT NULL,
+            score_source TEXT DEFAULT 'ai',
+            ai_verdict TEXT,
+            scored_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (token_mint) REFERENCES scored_tokens(token_mint)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_score_history_mint ON score_history(token_mint, scored_at DESC)")
     
     conn.commit()
     conn.close()
@@ -307,6 +322,18 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
         score_data.get("lifetime_fees_sol"),
         score_data.get("created_at"),
         source
+    ))
+    
+    # Append to score history
+    cursor.execute("""
+        INSERT INTO score_history (token_mint, risk_score, risk_level, score_source, ai_verdict, scored_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    """, (
+        score_data.get("token_mint"),
+        score_data.get("risk_score"),
+        score_data.get("risk_level"),
+        source,
+        score_data.get("verdict")
     ))
     
     conn.commit()
@@ -651,6 +678,61 @@ def get_creator_reputation(wallet_address: str) -> Optional[Dict[str, Any]]:
 
 
 # ============================================================================
+# Creator Leaderboard Functions
+# ============================================================================
+
+def get_creator_leaderboard(sort_by: str = "avg_risk", order: str = "desc", limit: int = 50, min_tokens: int = 2) -> List[Dict[str, Any]]:
+    """Get creator leaderboard — aggregated stats for all creators with at least min_tokens launches.
+    
+    Args:
+        sort_by: "avg_risk", "total_tokens", "high_risk_count", "last_active"
+        order: "asc" or "desc"
+        limit: max results
+        min_tokens: minimum token launches to appear on leaderboard
+    
+    Returns list of dicts with: creator_wallet, total_tokens, avg_risk_score,
+    high_risk_count, critical_count, low_risk_count, last_active
+    """
+    # Validate sort_by against whitelist to prevent SQL injection
+    sort_column_map = {
+        "avg_risk": "avg_risk_score",
+        "total_tokens": "total_tokens",
+        "high_risk_count": "high_risk_count",
+        "last_active": "last_active"
+    }
+    validated_sort_column = sort_column_map.get(sort_by, "avg_risk_score")
+    
+    # Validate order
+    validated_order = "DESC" if order.lower() != "asc" else "ASC"
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    query = f"""
+        SELECT 
+            creator_wallet,
+            COUNT(*) as total_tokens,
+            ROUND(AVG(risk_score), 1) as avg_risk_score,
+            SUM(CASE WHEN risk_level = 'HIGH' THEN 1 ELSE 0 END) as high_risk_count,
+            SUM(CASE WHEN risk_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical_count,
+            SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) as low_risk_count,
+            MAX(scored_at) as last_active
+        FROM scored_tokens
+        WHERE creator_wallet IS NOT NULL AND creator_wallet != ''
+        GROUP BY creator_wallet
+        HAVING COUNT(*) >= ?
+        ORDER BY {validated_sort_column} {validated_order}
+        LIMIT ?
+    """
+    
+    cursor.execute(query, (min_tokens, limit))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows]
+
+
+# ============================================================================
 # API Key Management Functions
 # ============================================================================
 
@@ -808,3 +890,43 @@ def get_api_key_by_prefix(key_prefix: str) -> Optional[dict]:
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+# ============================================================================
+# Score History Functions
+# ============================================================================
+
+def get_score_history(token_mint: str) -> List[Dict[str, Any]]:
+    """Get all historical scores for a token, ordered by scored_at DESC."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT risk_score, risk_level, score_source, ai_verdict, scored_at FROM score_history WHERE token_mint = ? ORDER BY scored_at DESC",
+        (token_mint,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_tokens_for_rescore(max_age_days: int = 7, min_score: int = 40, limit: int = 25) -> List[Dict[str, Any]]:
+    """Get tokens eligible for re-scoring.
+    Criteria: risk_score >= min_score, first scored within last max_age_days,
+    and last score_history entry is older than 24 hours.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT st.token_mint, st.name, st.symbol, st.risk_score, st.creator_wallet, st.scored_at
+        FROM scored_tokens st
+        WHERE st.risk_score >= ?
+        AND st.scored_at >= datetime('now', ? || ' days')
+        AND (
+            SELECT MAX(sh.scored_at) FROM score_history sh WHERE sh.token_mint = st.token_mint
+        ) < datetime('now', '-24 hours')
+        ORDER BY st.risk_score DESC
+        LIMIT ?
+    """, (min_score, f'-{int(max_age_days)}', limit))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Creator Reputation Leaderboard — ScamHound</title>
+    <meta name="description" content="Ranking token creators by historical risk patterns. Track repeat offenders and high-risk deployers on Solana.">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/png" sizes="48x48" href="/static/favicon-48.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                <a href="/" class="logo-link">
+                    <img src="/static/favicon-new.png" alt="ScamHound" class="logo-img" style="height: 32px; width: auto; margin-right: 8px; vertical-align: middle;">
+                    <h1>ScamHound</h1>
+                </a>
+            </div>
+            <nav class="nav-links">
+                <a href="/">Dashboard</a>
+                <a href="/leaderboard" class="active">Leaderboard</a>
+                <a href="/watchlist" id="watchlist-nav-link" style="display:none">Watchlist</a>
+                <a href="/settings" id="settings-nav-link" style="display:none">Settings</a>
+                <a href="#" id="logout-link" style="display:none" onclick="doLogout()">Logout</a>
+            </nav>
+            <p class="tagline">Ranking token creators by historical risk patterns</p>
+        </div>
+        <div class="stats-bar">
+            <div class="stat">
+                <span class="stat-value" id="total-creators">{{ leaderboard|length }}</span>
+                <span class="stat-label">Creators Tracked</span>
+            </div>
+            <div class="stat stat-danger">
+                <span class="stat-value" id="highest-avg">{{ "%.1f"|format(leaderboard[0].avg_risk_score) if leaderboard else '0' }}</span>
+                <span class="stat-label">Highest Avg Risk</span>
+            </div>
+            <div class="stat">
+                <span class="stat-value">{{ stats.total_scanned or 0 }}</span>
+                <span class="stat-label">Total Scanned</span>
+            </div>
+            <div class="stat stat-warning">
+                <span class="stat-value">{{ stats.high_risk or 0 }}</span>
+                <span class="stat-label">High Risk Tokens</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Sort Controls -->
+        <div class="leaderboard-controls">
+            <div class="leaderboard-controls-inner">
+                <label for="sort-select">Sort by:</label>
+                <select id="sort-select" class="filter-select" onchange="sortLeaderboard()">
+                    <option value="avg_risk|desc">Highest Risk</option>
+                    <option value="avg_risk|asc">Lowest Risk</option>
+                    <option value="total_tokens|desc">Most Launches</option>
+                    <option value="high_risk_count|desc">Most Critical Alerts</option>
+                    <option value="last_active|desc">Most Recent Activity</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Leaderboard Table -->
+        <div class="token-table-container">
+            <table class="token-table leaderboard-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Creator Wallet</th>
+                        <th>Tokens Launched</th>
+                        <th>Avg Risk Score</th>
+                        <th>High Risk</th>
+                        <th>Critical</th>
+                        <th>Low Risk</th>
+                        <th>Last Active</th>
+                    </tr>
+                </thead>
+                <tbody id="leaderboard-tbody">
+                    {% for creator in leaderboard %}
+                    <tr class="{% if creator.avg_risk_score > 70 %}leaderboard-row-danger{% elif creator.avg_risk_score > 40 %}leaderboard-row-warning{% endif %}">
+                        <td class="leaderboard-rank">{{ loop.index }}</td>
+                        <td>
+                            <a href="/api/creator/{{ creator.creator_wallet }}" class="leaderboard-wallet" title="{{ creator.creator_wallet }}">
+                                {{ creator.creator_wallet[:4] }}...{{ creator.creator_wallet[-4:] }}
+                            </a>
+                        </td>
+                        <td>{{ creator.total_tokens }}</td>
+                        <td>
+                            <span class="score-badge {% if creator.avg_risk_score > 80 %}risk-badge-critical{% elif creator.avg_risk_score > 60 %}risk-badge-high{% elif creator.avg_risk_score > 30 %}risk-badge-moderate{% else %}risk-badge-low{% endif %}">
+                                {{ creator.avg_risk_score }}
+                            </span>
+                        </td>
+                        <td>{{ creator.high_risk_count }}</td>
+                        <td>{{ creator.critical_count }}</td>
+                        <td>{{ creator.low_risk_count }}</td>
+                        <td class="time-cell" data-timestamp="{{ creator.last_active }}">
+                            {{ creator.last_active[:16] if creator.last_active else '—' }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="empty-state">
+                            No creators with multiple token launches found yet.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>🐕 ScamHound — Built by <a href="https://twitter.com/DeFiAuditCCIE" target="_blank">@DeFiAuditCCIE</a> (CCIE #14019)</p>
+            <p>Real-time rug pull detection powered by AI. <a href="https://twitter.com/ScamHoundCrypto" target="_blank">@ScamHoundCrypto</a></p>
+        </div>
+        <div class="footer-disclaimer">
+            <p>ScamHound provides automated risk analysis for informational purposes only. Not financial advice. Always DYOR.</p>
+        </div>
+    </footer>
+
+    <script>
+        // Relative time computation
+        function timeAgo(isoString) {
+            if (!isoString) return '—';
+            const now = new Date();
+            const then = new Date(isoString);
+            const diffMs = now - then;
+            const diffSec = Math.floor(diffMs / 1000);
+            const diffMin = Math.floor(diffSec / 60);
+            const diffHr = Math.floor(diffMin / 60);
+            const diffDay = Math.floor(diffHr / 24);
+
+            if (diffDay > 30) return Math.floor(diffDay / 30) + 'mo ago';
+            if (diffDay > 0) return diffDay + 'd ago';
+            if (diffHr > 0) return diffHr + 'h ago';
+            if (diffMin > 0) return diffMin + 'm ago';
+            return 'just now';
+        }
+
+        // Convert all timestamps to relative time on load
+        document.querySelectorAll('[data-timestamp]').forEach(el => {
+            const ts = el.getAttribute('data-timestamp');
+            if (ts) el.textContent = timeAgo(ts);
+        });
+
+        // Sort leaderboard via API
+        async function sortLeaderboard() {
+            const sortVal = document.getElementById('sort-select').value;
+            const [sort_by, order] = sortVal.split('|');
+
+            try {
+                const response = await fetch(`/api/leaderboard?sort_by=${sort_by}&order=${order}&limit=50&min_tokens=2`);
+                const data = await response.json();
+                renderLeaderboard(data.leaderboard || []);
+            } catch (e) {
+                console.error('Failed to fetch leaderboard:', e);
+            }
+        }
+
+        function renderLeaderboard(creators) {
+            const tbody = document.getElementById('leaderboard-tbody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            if (creators.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No creators match your criteria.</td></tr>';
+                return;
+            }
+
+            creators.forEach((creator, index) => {
+                const avg = creator.avg_risk_score || 0;
+                const wallet = creator.creator_wallet || '';
+                const walletShort = wallet.length > 8 ? wallet.slice(0, 4) + '...' + wallet.slice(-4) : wallet;
+                let rowClass = '';
+                if (avg > 70) rowClass = 'leaderboard-row-danger';
+                else if (avg > 40) rowClass = 'leaderboard-row-warning';
+
+                let badgeClass = 'risk-badge-low';
+                if (avg > 80) badgeClass = 'risk-badge-critical';
+                else if (avg > 60) badgeClass = 'risk-badge-high';
+                else if (avg > 30) badgeClass = 'risk-badge-moderate';
+
+                const lastActive = timeAgo(creator.last_active);
+
+                const tr = document.createElement('tr');
+                tr.className = rowClass;
+                tr.innerHTML = `
+                    <td class="leaderboard-rank">${index + 1}</td>
+                    <td><a href="/api/creator/${wallet}" class="leaderboard-wallet" title="${wallet}">${walletShort}</a></td>
+                    <td>${creator.total_tokens}</td>
+                    <td><span class="score-badge ${badgeClass}">${avg}</span></td>
+                    <td>${creator.high_risk_count}</td>
+                    <td>${creator.critical_count}</td>
+                    <td>${creator.low_risk_count}</td>
+                    <td class="time-cell">${lastActive}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Admin nav visibility check
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const tokenFromUrl = urlParams.get('token');
+            if (tokenFromUrl) {
+                localStorage.setItem('scamhound_admin_token', tokenFromUrl);
+                urlParams.delete('token');
+                const cleanUrl = urlParams.toString() ? window.location.pathname + '?' + urlParams.toString() : window.location.pathname;
+                history.replaceState(null, '', cleanUrl);
+            }
+            const storedToken = localStorage.getItem('scamhound_admin_token');
+            if (storedToken) {
+                const settingsLink = document.getElementById('settings-nav-link');
+                if (settingsLink) settingsLink.style.display = 'inline';
+                const watchlistLink = document.getElementById('watchlist-nav-link');
+                if (watchlistLink) watchlistLink.style.display = 'inline';
+                const logoutLink = document.getElementById('logout-link');
+                if (logoutLink) logoutLink.style.display = 'inline';
+            }
+        })();
+
+        function doLogout() {
+            localStorage.removeItem('scamhound_admin_token');
+            window.location.reload();
+        }
+    </script>
+</body>
+</html>

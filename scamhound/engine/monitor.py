@@ -812,3 +812,28 @@ def stop_scheduler() -> None:
         logger.info("[SCAMHOUND] Monitor scheduler stopped")
     else:
         logger.warning("[SCAMHOUND] No scheduler running to stop")
+
+
+def run_rescore_cycle():
+    """Re-score tokens that are risky and within their first 7 days.
+    Called by APScheduler every 24 hours.
+    """
+    tokens_to_rescore = database.get_tokens_for_rescore(max_age_days=7, min_score=40, limit=25)
+
+    if not tokens_to_rescore:
+        logger.info("[RESCORE] No tokens eligible for re-scoring")
+        return
+
+    logger.info(f"[RESCORE] Re-scoring {len(tokens_to_rescore)} tokens")
+
+    for token_info in tokens_to_rescore:
+        try:
+            # Re-use the existing scan function
+            result = scan_single_token(token_info["token_mint"], skip_if_scored=False)
+            if result:
+                old_score = token_info["risk_score"]
+                new_score = result.get("risk_score", 0)
+                logger.info(f"[RESCORE] {token_info['symbol'] or token_info['token_mint'][:8]}: {old_score} \u2192 {new_score}")
+        except Exception as e:
+            logger.error(f"[RESCORE] Error re-scoring {token_info['token_mint'][:8]}: {e}")
+            continue

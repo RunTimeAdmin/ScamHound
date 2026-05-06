@@ -2360,7 +2360,112 @@ textarea::placeholder {
         max-width: 150px;
     }
 }/* --------------------------------------------------------------------------
-   25. Filter Bar & Pagination
+   25. Leaderboard Styles
+   -------------------------------------------------------------------------- */
+
+.leaderboard-controls {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md) var(--space-lg);
+    margin-bottom: var(--space-md);
+    box-shadow: var(--shadow-sm);
+}
+
+.leaderboard-controls-inner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.leaderboard-controls-inner label {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.leaderboard-table .leaderboard-rank {
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--text-primary);
+    text-align: center;
+    min-width: 32px;
+}
+
+.leaderboard-wallet {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--accent-primary);
+    text-decoration: none;
+    background: var(--bg-primary);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-secondary);
+    transition: all var(--transition-fast);
+}
+
+.leaderboard-wallet:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-primary);
+    text-decoration: none;
+}
+
+/* Risk score color badges for leaderboard */
+.score-badge.risk-badge-critical {
+    background: var(--risk-critical-bg);
+    color: var(--risk-critical);
+    border-color: var(--risk-critical);
+}
+
+.score-badge.risk-badge-high {
+    background: var(--risk-high-bg);
+    color: var(--risk-high);
+    border-color: var(--risk-high);
+}
+
+.score-badge.risk-badge-moderate {
+    background: var(--risk-moderate-bg);
+    color: var(--risk-moderate);
+    border-color: var(--risk-moderate);
+}
+
+.score-badge.risk-badge-low {
+    background: var(--risk-low-bg);
+    color: var(--risk-low);
+    border-color: var(--risk-low);
+}
+
+/* Row risk tinting */
+.leaderboard-row-danger {
+    background: rgba(248, 81, 73, 0.06);
+}
+
+.leaderboard-row-danger:hover {
+    background: rgba(248, 81, 73, 0.12) !important;
+}
+
+.leaderboard-row-warning {
+    background: rgba(219, 109, 40, 0.06);
+}
+
+.leaderboard-row-warning:hover {
+    background: rgba(219, 109, 40, 0.12) !important;
+}
+
+@media (max-width: 768px) {
+    .leaderboard-controls-inner {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .leaderboard-table {
+        min-width: 700px;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   26. Filter Bar & Pagination
    -------------------------------------------------------------------------- */
 
 /* Filter Bar */
