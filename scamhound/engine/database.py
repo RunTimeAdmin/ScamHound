@@ -180,6 +180,18 @@ def init_db() -> None:
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_scored_user ON scored_tokens(user_id)")
 
+    # Add scans_today column to users if not exists
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN scans_today INTEGER DEFAULT 0")
+    except Exception:
+        pass  # Column already exists
+
+    # Add last_scan_date column to users if not exists
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN last_scan_date TEXT")
+    except Exception:
+        pass  # Column already exists
+
     conn.commit()
     conn.close()
     print("[SCAMHOUND] Database initialized")
@@ -1035,6 +1047,48 @@ def get_scores_for_user(user_id: int, limit: int = 100, offset: int = 0) -> list
     results = [dict(row) for row in c.fetchall()]
     conn.close()
     return results
+
+
+def check_and_increment_scan(user_id: int, is_admin: bool) -> dict:
+    """
+    Check if user can scan. If yes, increment counter.
+    Returns {"allowed": True/False, "scans_today": N, "limit": N}
+    Admin users are never rate limited.
+    """
+    if is_admin:
+        return {"allowed": True, "scans_today": 0, "limit": -1}
+
+    from datetime import date
+    limit = int(os.environ.get("USER_DAILY_SCAN_LIMIT", "10"))
+    today = date.today().isoformat()
+
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT scans_today, last_scan_date FROM users WHERE id = ?", (user_id,))
+    row = c.fetchone()
+
+    if not row:
+        conn.close()
+        return {"allowed": False, "scans_today": 0, "limit": limit}
+
+    scans_today = row["scans_today"] or 0
+    last_scan_date = row["last_scan_date"]
+
+    # Reset if new day
+    if last_scan_date != today:
+        scans_today = 0
+
+    if scans_today >= limit:
+        conn.close()
+        return {"allowed": False, "scans_today": scans_today, "limit": limit}
+
+    # Increment
+    c.execute("UPDATE users SET scans_today = ?, last_scan_date = ? WHERE id = ?",
+              (scans_today + 1, today, user_id))
+    conn.commit()
+    conn.close()
+
+    return {"allowed": True, "scans_today": scans_today + 1, "limit": limit}
 
 
 def get_tokens_for_rescore(max_age_days: int = 7, min_score: int = 40, limit: int = 25) -> List[Dict[str, Any]]:

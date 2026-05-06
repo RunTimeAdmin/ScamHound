@@ -817,7 +817,20 @@ async def scan_token(request: Request):
                 status_code=429,
                 headers={"Retry-After": str(retry_after)}
             )
-    
+
+    # Check per-user daily scan limit (browser users only)
+    scan_check = None
+    if user:
+        scan_check = database.check_and_increment_scan(user['id'], user.get('is_admin', False))
+        if not scan_check['allowed']:
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": f"Daily scan limit reached ({scan_check['scans_today']}/{scan_check['limit']}). Resets at midnight UTC."
+                },
+                status_code=429
+            )
+
     try:
         data = await request.json()
         
@@ -868,7 +881,15 @@ async def scan_token(request: Request):
             except Exception:
                 pass
 
-        response = JSONResponse(content={"success": True, "result": result})
+        response_data = {"success": True, "result": result}
+
+        # Include remaining scans info for browser users
+        if scan_check and scan_check['limit'] > 0:
+            response_data["scans_remaining"] = scan_check['limit'] - scan_check['scans_today']
+        elif scan_check and scan_check['limit'] == -1:
+            response_data["scans_remaining"] = -1
+
+        response = JSONResponse(content=response_data)
 
         if key_row:
             database.increment_api_key_usage(key_row["id"], "/api/scan")
