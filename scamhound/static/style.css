@@ -814,6 +814,12 @@ footer {
     line-height: 1.5;
 }
 
+.fallback-badge {
+    font-size: 0.75rem;
+    color: #ff9800;
+    opacity: 0.85;
+}
+
 /* Time cell */
 .time-cell {
     text-align: right;

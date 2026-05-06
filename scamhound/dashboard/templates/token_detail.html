@@ -61,7 +61,7 @@
         </div>
 
         <div class="verdict-box risk-border-{{ token.risk_level.lower() if token.risk_level else 'unknown' }}">
-            <h3>🤖 AI Verdict</h3>
+            <h3>🤖 AI Verdict{% if token.score_source == 'fallback' %} <span class="fallback-badge" title="Preliminary score — AI analysis pending">⏳ Preliminary</span>{% endif %}</h3>
             <p>{{ token.ai_verdict or 'No analysis available.' }}</p>
         </div>
 

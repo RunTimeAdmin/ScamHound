@@ -226,7 +226,7 @@
                             {% endif %}
                         </td>
                         <td class="verdict-cell">
-                            {{ (token.ai_verdict or '')[:60] }}{% if (token.ai_verdict or '')|length > 60 %}...{% endif %}
+                            {% if token.score_source == 'fallback' %}<span class="fallback-badge" title="Preliminary score — AI analysis pending">⏳</span> {% endif %}{{ (token.ai_verdict or '')[:60] }}{% if (token.ai_verdict or '')|length > 60 %}...{% endif %}
                         </td>
                         <td class="time-cell">
                             {{ token.scored_at[:16] if token.scored_at else '—' }}
