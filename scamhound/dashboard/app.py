@@ -52,6 +52,7 @@ _autoscan_scheduler: Optional[BackgroundScheduler] = None
 _autoscan_enabled: bool = False
 _autoscan_interval: int = 60  # seconds
 _autoscan_lock = threading.Lock()
+_AUTO_SCAN_ALLOWED = os.environ.get("AUTO_SCAN_ENABLED", "false").lower() == "true"
 
 # WebSocket active connections
 _websocket_connections: set = set()
@@ -989,6 +990,16 @@ async def autoscan_toggle(request: Request):
 
     global _autoscan_scheduler, _autoscan_enabled, _autoscan_interval
 
+    if not _AUTO_SCAN_ALLOWED:
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "Auto-scanning is disabled (AUTO_SCAN_ENABLED != true). Set the environment variable to enable.",
+                "enabled": False
+            },
+            status_code=403
+        )
+
     with _autoscan_lock:
         if _autoscan_enabled:
             # Disable auto-scan
@@ -1438,6 +1449,9 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"[SCAMHOUND] Could not register monitor callback: {e}")
     
+    if not _AUTO_SCAN_ALLOWED:
+        logger.info("[MONITOR] Auto-scanning disabled (AUTO_SCAN_ENABLED != true)")
+
     logger.info("[SCAMHOUND] Dashboard started")
 
 

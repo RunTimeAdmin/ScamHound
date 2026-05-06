@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
 RISK_THRESHOLD = int(os.getenv("RISK_ALERT_THRESHOLD", "65"))
 MIN_TOKEN_AGE_MINUTES = int(os.getenv("MIN_TOKEN_AGE_MINUTES", "0"))  # Skip tokens younger than this
+AUTO_SCAN_ENABLED = os.environ.get("AUTO_SCAN_ENABLED", "false").lower() == "true"
 
 # Capped LRU-style processed tokens tracker (max 500 entries)
 _processed_tokens = OrderedDict()
@@ -596,6 +597,10 @@ def run_cycle() -> None:
 
 def start_scheduler() -> None:
     """Start the monitoring scheduler."""
+    if not AUTO_SCAN_ENABLED:
+        logger.info("[MONITOR] Auto-scanning disabled (AUTO_SCAN_ENABLED != true)")
+        return
+
     global _scheduler
     _scheduler = BackgroundScheduler()
     scheduler = _scheduler

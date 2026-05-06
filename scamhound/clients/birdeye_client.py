@@ -5,8 +5,9 @@ Market-side analysis - liquidity, trading patterns, price action
 
 import os
 import time
+import threading
 import requests
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 import logging
 from collections import Counter
 
@@ -21,16 +22,55 @@ BASE_URL = "https://public-api.birdeye.so"
 _last_request_time = 0
 _MIN_DELAY_SECONDS = 0.5  # Minimum delay between requests
 
+# TTL response cache: {(endpoint, token_mint): (response_dict, timestamp)}
+_response_cache: Dict[Tuple[str, str], Tuple[Any, float]] = {}
+_cache_lock = threading.Lock()
+_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+
+def _get_cache_key(endpoint: str, params: Optional[Dict] = None) -> Tuple[str, str]:
+    """Build a cache key from endpoint and the token address param."""
+    address = (params or {}).get("address", "")
+    return (endpoint, address)
+
+
+def _check_cache(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    """Return cached response if still within TTL, else None."""
+    key = _get_cache_key(endpoint, params)
+    with _cache_lock:
+        entry = _response_cache.get(key)
+        if entry is not None:
+            response_data, ts = entry
+            if time.time() - ts < _CACHE_TTL_SECONDS:
+                logger.debug(f"[BIRDEYE] Cache hit for {key}")
+                return response_data
+            else:
+                del _response_cache[key]
+    return None
+
+
+def _store_cache(endpoint: str, params: Optional[Dict], response_data: Dict) -> None:
+    """Store a response in the cache."""
+    key = _get_cache_key(endpoint, params)
+    with _cache_lock:
+        _response_cache[key] = (response_data, time.time())
+
 
 def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
     """
     Make an authenticated request to the Birdeye API.
     
     Implements:
+    - TTL response cache (5 minutes)
     - Rate limiting (0.5s delay between requests)
     - Retry logic with exponential backoff for 429 errors
     """
     global _last_request_time
+    
+    # Check cache first
+    cached = _check_cache(endpoint, params)
+    if cached is not None:
+        return cached
     
     url = f"{BASE_URL}{endpoint}"
     api_key = os.environ.get("BIRDEYE_API_KEY", "")
@@ -55,7 +95,11 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
             requests.get, url, headers=headers, params=params, timeout=30
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        # Store in cache
+        if result is not None:
+            _store_cache(endpoint, params, result)
+        return result
     except requests.exceptions.RequestException as e:
         logger.error(f"[BIRDEYE] API error on {endpoint}: {e}")
         return None
@@ -94,33 +138,42 @@ def get_token_overview(token_mint: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def get_liquidity_data(token_mint: str) -> Optional[Dict[str, Any]]:
+def get_liquidity_data(token_mint: str, overview_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """
     Get liquidity pool data.
     
     Note: The /defi/liquidity endpoint returns 404 and is deprecated.
     We now use token_overview which includes liquidity data.
     
+    Args:
+        token_mint: The token mint address.
+        overview_data: Optional pre-fetched overview data from get_token_overview().
+                       If provided, skips the redundant API call.
+    
     Returns:
     - liquidity_usd: float
     - liquidity_to_mcap_ratio: float (low ratio = danger)
     - pool_count: int (estimated)
     """
-    # Use token_overview instead of deprecated /defi/liquidity
-    result = _make_request("/defi/token_overview", params={"address": token_mint})
-    
-    if result is None:
-        return None
-    
-    data = result
-    if isinstance(result, dict):
-        if "data" in result:
-            data = result["data"]
-        elif "response" in result:
-            data = result["response"]
-    
-    if not isinstance(data, dict):
-        return None
+    if overview_data is not None:
+        # Use pre-fetched data directly — no API call needed
+        data = overview_data
+    else:
+        # Fallback: fetch from API (backward-compatible)
+        result = _make_request("/defi/token_overview", params={"address": token_mint})
+        
+        if result is None:
+            return None
+        
+        data = result
+        if isinstance(result, dict):
+            if "data" in result:
+                data = result["data"]
+            elif "response" in result:
+                data = result["response"]
+        
+        if not isinstance(data, dict):
+            return None
     
     # Extract liquidity and marketcap from token_overview
     liquidity_usd = data.get("liquidity", 0)
@@ -252,9 +305,12 @@ def get_price_history(token_mint: str, time_from: int, time_to: int) -> Optional
 def get_full_market_data(token_mint: str) -> Dict[str, Any]:
     """
     Get comprehensive market data for a token.
+    
+    Optimized: calls token_overview once and reuses data for liquidity extraction.
     """
     overview = get_token_overview(token_mint)
-    liquidity = get_liquidity_data(token_mint)
+    # Pass overview data to avoid redundant API call to same endpoint
+    liquidity = get_liquidity_data(token_mint, overview_data=overview)
     trades = get_trade_history(token_mint)
     
     return {
