@@ -6,6 +6,7 @@ Main polling loop that coordinates all analysis
 import os
 import logging
 import asyncio
+import concurrent.futures
 from collections import OrderedDict
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ from clients import bags_client
 from clients import helius_client
 from clients import birdeye_client
 from clients import bubblemaps_client
+from clients import platform_router
 from engine import database
 from engine import scorer
 from alerts import twitter_bot
@@ -461,223 +463,34 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
 
 
 def scan_single_token(token_mint: str, skip_if_scored: bool = True) -> Optional[Dict[str, Any]]:
-    """
-    Scan and analyze a single token by mint address (sync wrapper for async implementation).
+    """Scan a single token through the full pipeline.
     
-    This is a convenience wrapper that runs the async scan_single_token_async()
-    using asyncio.run(). For use in sync contexts like the scheduler.
-    
-    Args:
-        token_mint: The token mint address to scan
-        skip_if_scored: If True, skip if token already in database
-        
-    Returns:
-        The score result dict, or None if skipped or error
+    Creates a new event loop if needed (for sync callers like APScheduler).
     """
     try:
-        return asyncio.run(scan_single_token_async(token_mint, skip_if_scored))
+        loop = asyncio.get_running_loop()
+        # Already in an async context — create a task
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(_run_scan_in_new_loop, token_mint, skip_if_scored)
+            return future.result(timeout=120)
     except RuntimeError:
-        # If already in an async context (e.g., FastAPI), use the async version directly
-        # This shouldn't happen in normal usage but provides a fallback
-        logger.warning("[SCAMHOUND] scan_single_token called from async context, using sync fallback")
-        # Fallback to sequential execution for edge cases
-        return _scan_single_token_sync_fallback(token_mint, skip_if_scored)
+        # No running loop — create one (APScheduler thread context)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(scan_single_token_async(token_mint, skip_if_scored))
+        finally:
+            loop.close()
 
 
-def _scan_single_token_sync_fallback(token_mint: str, skip_if_scored: bool = True) -> Optional[Dict[str, Any]]:
-    """
-    Fallback synchronous implementation for edge cases.
-    This is the original sequential implementation kept for compatibility.
-    """
-    logger.info(f"[SCAMHOUND] Scanning single token (sync fallback): {token_mint}")
-    
-    # Check if already scored
-    if skip_if_scored and database.token_already_scored(token_mint):
-        logger.info(f"[SCAMHOUND] Token {token_mint[:8]}... already scored, skipping")
-        return database.get_token_score(token_mint)
-    
-    # Check if scored recently (within last hour) to prevent duplicates
-    if database.was_recently_scored(token_mint, hours=1):
-        logger.info(f"[SCAMHOUND] Token {token_mint[:8]}... scored within last hour, skipping")
-        return database.get_token_score(token_mint)
-    
+def _run_scan_in_new_loop(token_mint: str, skip_if_scored: bool) -> Optional[Dict[str, Any]]:
+    """Helper to run async scan in a fresh event loop (for thread pool execution)."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        # Build token profile
-        token_data = {
-            "token_mint": token_mint,
-            "name": "Unknown",
-            "symbol": "UNKNOWN",
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        # Get Bags profile (may fail if token not from Bags)
-        try:
-            bags_profile = bags_client.get_full_token_profile(token_mint)
-            if bags_profile:
-                token_data.update(bags_profile)
-                # Try to get better name/symbol from Bags
-                if bags_profile.get("name"):
-                    token_data["name"] = bags_profile["name"]
-                if bags_profile.get("symbol"):
-                    token_data["symbol"] = bags_profile["symbol"]
-                # Try to get created_at from Bags if not already set
-                if bags_profile.get("created_at"):
-                    token_data["created_at"] = bags_profile["created_at"]
-        except Exception as e:
-            logger.warning(f"[SCAMHOUND] Could not get Bags profile for {token_mint[:8]}...: {e}")
-        
-        # Calculate token age
-        token_data["token_age_minutes"] = _calculate_token_age_minutes(
-            token_data.get("created_at")
-        )
-        token_data["token_status"] = _get_token_status(token_data)
-        
-        # Check minimum age filter
-        age_minutes = token_data.get("token_age_minutes")
-        if age_minutes is not None and MIN_TOKEN_AGE_MINUTES > 0:
-            if age_minutes < MIN_TOKEN_AGE_MINUTES:
-                logger.info(
-                    f"[SCAMHOUND] Token {token_mint[:8]}... skipped: "
-                    f"age {age_minutes}m < minimum {MIN_TOKEN_AGE_MINUTES}m"
-                )
-                return None
-        
-        # Get holder data from Helius
-        try:
-            holder_data = helius_client.get_token_holders(token_mint)
-            if holder_data:
-                token_data["holders"] = {
-                    "top_holders": holder_data.get("top_holders", []),
-                    "top_10_concentration_pct": holder_data.get("top10_pct", 0),
-                    "total_holder_count": holder_data.get("total_holders", 0),
-                    "concentration_score": holder_data.get("concentration_score", "unknown"),
-                    "top1_pct": holder_data.get("top1_pct", 0),
-                    "top5_pct": holder_data.get("top5_pct", 0)
-                }
-        except Exception as e:
-            logger.warning(f"[SCAMHOUND] Could not get holder data for {token_mint[:8]}...: {e}")
-        
-        # Get BubbleMaps cluster analysis
-        try:
-            bubblemaps_data = bubblemaps_client.get_cluster_analysis(
-                token_mint, chain="solana"
-            )
-            if bubblemaps_data:
-                decentralization_score = bubblemaps_data.get(
-                    "decentralization_score", 0
-                )
-                cluster_count = bubblemaps_data.get("cluster_count", 0)
-                largest_cluster_share = bubblemaps_data.get(
-                    "largest_cluster_share", 0
-                )
-
-                # Derive risk signal from the data
-                if largest_cluster_share > 70 or cluster_count == 1:
-                    risk_signal = "HIGHLY_CENTRALIZED"
-                elif largest_cluster_share > 40 or cluster_count < 3:
-                    risk_signal = "MODERATE_CENTRALIZATION"
-                elif cluster_count >= 5 and largest_cluster_share < 25:
-                    risk_signal = "DECENTRALIZED"
-                else:
-                    risk_signal = "MODERATE"
-
-                token_data["bubblemaps"] = {
-                    "decentralization_score": decentralization_score,
-                    "cluster_count": cluster_count,
-                    "largest_cluster_share": largest_cluster_share,
-                    "risk_signal": risk_signal
-                }
-                logger.info(
-                    f"[SCAMHOUND] BubbleMaps analysis for {token_mint[:8]}...: "
-                    f"decentralization={decentralization_score}, "
-                    f"clusters={cluster_count}"
-                )
-            else:
-                logger.warning(
-                    f"[SCAMHOUND] No BubbleMaps data for {token_mint[:8]}..."
-                )
-        except Exception as e:
-            logger.warning(
-                f"[SCAMHOUND] Could not get BubbleMaps data for "
-                f"{token_mint[:8]}...: {e}"
-            )
-        
-        # Get creator wallet
-        creator_wallet = token_data.get("creator", {}).get("wallet")
-        
-        if creator_wallet:
-            try:
-                # Analyze creator wallet
-                creator_analysis = helius_client.analyze_creator_wallet(creator_wallet)
-                token_data["wallet_age_days"] = creator_analysis.get("wallet_age_days", -1)
-                token_data["prior_launch_count"] = creator_analysis.get("prior_launch_count", 0)
-                token_data["abandoned_tokens"] = creator_analysis.get("abandoned_tokens", [])
-                token_data["days_since_last_launch"] = creator_analysis.get("days_since_last_launch")
-            except Exception as e:
-                logger.warning(f"[SCAMHOUND] Could not analyze creator wallet for {token_mint[:8]}...: {e}")
-            
-            # Check holder clustering using Helius holder data
-            try:
-                holder_wallets = [
-                    h.get("address") for h in token_data.get("holders", {}).get("top_holders", [])
-                    if h.get("address")
-                ]
-                
-                if holder_wallets:
-                    clustering = helius_client.check_wallet_clustering(holder_wallets)
-                    token_data["clustering_score"] = clustering.get("clustering_score", 0)
-                    token_data["clustered_wallets"] = clustering.get("clustered_wallets", 0)
-            except Exception as e:
-                logger.warning(f"[SCAMHOUND] Could not check clustering for {token_mint[:8]}...: {e}")
-        
-        # Get market data
-        try:
-            market_data = birdeye_client.get_full_market_data(token_mint)
-            if market_data:
-                overview = market_data.get("overview", {})
-                liquidity = market_data.get("liquidity", {})
-                trades = market_data.get("trades", {})
-                
-                token_data["liquidity_usd"] = liquidity.get("liquidity_usd", 0)
-                token_data["liquidity_to_mcap_ratio"] = liquidity.get("liquidity_to_mcap_ratio", 0)
-                token_data["unique_trader_count"] = trades.get("unique_trader_count", 0)
-                token_data["wash_trading_score"] = trades.get("wash_trading_score", 0)
-                token_data["large_sell_pressure"] = trades.get("large_sell_pressure", False)
-                
-                # Try to get token name/symbol from Birdeye overview
-                if overview:
-                    if not token_data.get("name") or token_data["name"] == "Unknown":
-                        birdeye_name = overview.get("name")
-                        if birdeye_name:
-                            token_data["name"] = birdeye_name
-                    if not token_data.get("symbol") or token_data["symbol"] == "UNKNOWN":
-                        birdeye_symbol = overview.get("symbol")
-                        if birdeye_symbol:
-                            token_data["symbol"] = birdeye_symbol
-        except Exception as e:
-            logger.warning(f"[SCAMHOUND] Could not get market data for {token_mint[:8]}...: {e}")
-        
-        # Calculate risk score
-        score_result = scorer.calculate_risk_score(token_data)
-        
-        # Save to database
-        database.save_score(score_result)
-        
-        # Mark as processed
-        _mark_processed(token_mint)
-        
-        # Log result
-        logger.info(
-            f"[SCAMHOUND] {score_result.get('symbol', '???')} | "
-            f"Score: {score_result.get('risk_score', 0)} | "
-            f"{score_result.get('risk_level', 'UNKNOWN')}"
-        )
-        
-        return score_result
-        
-    except Exception as e:
-        logger.error(f"[SCAMHOUND] Error scanning token {token_mint}: {e}")
-        return None
+        return loop.run_until_complete(scan_single_token_async(token_mint, skip_if_scored))
+    finally:
+        loop.close()
 
 
 async def _run_cycle_async(tokens: list) -> None:
@@ -753,14 +566,14 @@ def run_cycle() -> None:
     logger.info("[SCAMHOUND] Starting monitor cycle...")
     
     try:
-        # Get recent launches (limited to 25 tokens per cycle)
-        recent_tokens = bags_client.get_recent_launches(limit=25)[:25]
+        # Get recent launches from all active platforms (limited to 25 per platform)
+        recent_tokens = platform_router.get_recent_launches(limit=25)[:50]
         
         if not recent_tokens:
-            logger.info("[SCAMHOUND] No recent tokens found from Bags API")
+            logger.info("[SCAMHOUND] No recent tokens found from any platform")
             return
         
-        logger.info(f"[SCAMHOUND] Got {len(recent_tokens)} tokens from Bags feed")
+        logger.info(f"[SCAMHOUND] Got {len(recent_tokens)} tokens from platform router")
         
         # Run the async scan loop in a new event loop
         # (APScheduler calls run_cycle from a thread)

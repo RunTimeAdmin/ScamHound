@@ -73,6 +73,12 @@ def init_db() -> None:
         cursor.execute("ALTER TABLE scored_tokens ADD COLUMN score_source TEXT DEFAULT 'ai'")
     except Exception:
         pass  # Column already exists
+
+    # Add platform column if not exists
+    try:
+        cursor.execute("ALTER TABLE scored_tokens ADD COLUMN platform TEXT DEFAULT 'bags'")
+    except Exception:
+        pass  # Column already exists
     
     # API Keys table
     cursor.execute("""
@@ -296,13 +302,17 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
     # Get score_source from score_data if available, otherwise use parameter
     source = score_data.get("score_source", score_source)
     
+    # Get platform from score_data (default to 'bags' for backwards compat)
+    platform = score_data.get("platform", "bags")
+
     cursor.execute("""
         INSERT OR REPLACE INTO scored_tokens (
             token_mint, name, symbol, risk_score, risk_level, ai_verdict,
             top_risk_factors, top_safe_signals, top_10_concentration,
             creator_wallet, creator_username, prior_launches, wallet_age_days,
-            clustering_score, liquidity_usd, lifetime_fees_sol, created_at, score_source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            clustering_score, liquidity_usd, lifetime_fees_sol, created_at, score_source,
+            platform
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         score_data.get("token_mint"),
         score_data.get("name"),
@@ -321,7 +331,8 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
         score_data.get("liquidity_usd"),
         score_data.get("lifetime_fees_sol"),
         score_data.get("created_at"),
-        source
+        source,
+        platform
     ))
     
     # Append to score history

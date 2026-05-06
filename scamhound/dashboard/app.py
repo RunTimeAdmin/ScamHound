@@ -782,6 +782,13 @@ async def bubblemaps_quota():
     return JSONResponse(content=bubblemaps_client.get_quota_status())
 
 
+@app.get("/api/platforms")
+async def api_platforms():
+    """Get status of registered token feed platforms."""
+    from clients import platform_router
+    return JSONResponse(content=platform_router.get_platform_status())
+
+
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     """
