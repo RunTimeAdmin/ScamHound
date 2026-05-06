@@ -1,12 +1,24 @@
+# HTTP client for external API calls
 requests==2.31.0
+# Anthropic Claude AI SDK
 anthropic>=0.51.0
+# OpenAI-compatible SDK (used for DeepSeek API)
 openai>=1.0.0
+# Twitter/X API client for automated alerts
 tweepy==4.14.0
+# High-performance async web framework
 fastapi==0.110.0
-uvicorn==0.29.0
+# ASGI server with WebSocket support
+uvicorn[standard]==0.29.0
+# Environment variable loading from .env files
 python-dotenv==1.0.0
+# Background task scheduler for auto-scanning
 apscheduler==3.10.4
+# HTML templating engine for dashboard
 jinja2==3.1.3
+# PDF report generation
 reportlab>=4.1.0
+# Testing framework
 pytest==8.1.1
+# Async test support for pytest
 pytest-asyncio==0.23.6
