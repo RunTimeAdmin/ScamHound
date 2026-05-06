@@ -197,7 +197,7 @@ def _add_rate_limit_headers(response: JSONResponse, key_row: dict) -> JSONRespon
 # Create FastAPI app
 app = FastAPI(
     title="ScamHound",
-    description="Real-time rug pull detection for Bags.fm",
+    description="On-demand rug pull detection for Solana",
     version="1.0.0"
 )
 
