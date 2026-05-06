@@ -13,13 +13,6 @@ import tweepy
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Twitter API credentials
-TWITTER_API_KEY = os.getenv("TWITTER_API_KEY", "")
-TWITTER_API_SECRET = os.getenv("TWITTER_API_SECRET", "")
-TWITTER_ACCESS_TOKEN = os.getenv("TWITTER_ACCESS_TOKEN", "")
-TWITTER_ACCESS_SECRET = os.getenv("TWITTER_ACCESS_SECRET", "")
-TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN", "")
-
 RISK_THRESHOLD = int(os.getenv("RISK_ALERT_THRESHOLD", "65"))
 
 # Initialize Twitter API client (OAuth 1.0a for posting tweets)
@@ -27,27 +20,40 @@ api = None
 client = None
 
 
+def _get_twitter_credentials():
+    """Get Twitter credentials at call time, not import time."""
+    return {
+        "consumer_key": os.environ.get("TWITTER_API_KEY", ""),
+        "consumer_secret": os.environ.get("TWITTER_API_SECRET", ""),
+        "access_token": os.environ.get("TWITTER_ACCESS_TOKEN", ""),
+        "access_token_secret": os.environ.get("TWITTER_ACCESS_SECRET", ""),
+        "bearer_token": os.environ.get("TWITTER_BEARER_TOKEN", ""),
+    }
+
+
 def _init_twitter():
     """Initialize Twitter API client."""
     global api, client
     
-    if not all([TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET]):
+    creds = _get_twitter_credentials()
+    
+    if not all([creds["consumer_key"], creds["consumer_secret"], creds["access_token"], creds["access_token_secret"]]):
         logger.warning("[TWITTER] Missing credentials - Twitter alerts disabled")
         return False
     
     try:
         # OAuth 1.0a authentication
-        auth = tweepy.OAuthHandler(TWITTER_API_KEY, TWITTER_API_SECRET)
-        auth.set_access_token(TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET)
+        auth = tweepy.OAuthHandler(creds["consumer_key"], creds["consumer_secret"])
+        auth.set_access_token(creds["access_token"], creds["access_token_secret"])
         api = tweepy.API(auth)
         
         # OAuth 2.0 client for v2 API
         client = tweepy.Client(
-            bearer_token=TWITTER_BEARER_TOKEN,
-            consumer_key=TWITTER_API_KEY,
-            consumer_secret=TWITTER_API_SECRET,
-            access_token=TWITTER_ACCESS_TOKEN,
-            access_token_secret=TWITTER_ACCESS_SECRET
+            bearer_token=creds["bearer_token"],
+            consumer_key=creds["consumer_key"],
+            consumer_secret=creds["consumer_secret"],
+            access_token=creds["access_token"],
+            access_token_secret=creds["access_token_secret"]
         )
         
         # Verify credentials

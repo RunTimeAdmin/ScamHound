@@ -103,12 +103,8 @@ def was_recently_scored(token_mint: str, hours: int = 1) -> bool:
     cursor = conn.cursor()
     
     cursor.execute(
-        """
-        SELECT 1 FROM scored_tokens 
-        WHERE token_mint = ? 
-        AND scored_at >= datetime('now', '-{} hours')
-        """.format(hours),
-        (token_mint,)
+        "SELECT 1 FROM scored_tokens WHERE token_mint = ? AND scored_at >= datetime('now', ? || ' hours')",
+        (token_mint, f'-{int(hours)}')
     )
     
     result = cursor.fetchone()

@@ -195,7 +195,7 @@ BAGS.FM DATA:
 - Creator royalty: {royalty_pct}%
 - Top holder concentration: {top1_pct}% (top 1), {top5_pct}% (top 5), {top_10_concentration}% (top 10)
 - Concentration risk level: {concentration_score}
-- Total holders: {total_holders}
+- Total holders (estimate): {total_holders}
 - Lifetime trading fees collected: {lifetime_fees} SOL
 - Top holders: {json.dumps(top_holders[:5])}
 

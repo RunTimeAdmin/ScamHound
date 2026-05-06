@@ -243,5 +243,20 @@ def get_raw_config() -> Dict[str, str]:
     return raw
 
 
+def get_config(key: str, default=None) -> str:
+    """
+    Get a configuration value by key.
+    Checks os.environ (which includes config.json values loaded at startup).
+
+    Args:
+        key: The configuration key name
+        default: Default value if key is not found
+
+    Returns:
+        The configuration value or default
+    """
+    return os.environ.get(key, default)
+
+
 # Initialize config on module import
 load_config()
