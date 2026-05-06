@@ -261,6 +261,7 @@
                 <a href="/" id="nav-dashboard">Dashboard</a>
                 <a href="/watchlist" id="nav-watchlist">Watchlist</a>
                 <a href="/settings" class="active">Settings</a>
+                <a href="#" id="logout-link" style="display:none" onclick="doLogout()">Logout</a>
             </nav>
             <p class="tagline">Real-time rug pull detection for Bags.fm</p>
         </div>
@@ -464,32 +465,29 @@
     <div class="toast-container" id="toast-container"></div>
 
     <script>
-        // Preserve token across navigation links
+        // Admin token management: extract from URL, persist in localStorage
         (function() {
             const urlParams = new URLSearchParams(window.location.search);
-            const adminToken = urlParams.get('token');
-            if (adminToken) {
-                // Update logo link
-                const logoLink = document.getElementById('logo-link');
-                if (logoLink) {
-                    logoLink.href = '/?token=' + encodeURIComponent(adminToken);
-                }
-                // Update nav links
-                const dashboardLink = document.getElementById('nav-dashboard');
-                if (dashboardLink) {
-                    dashboardLink.href = '/?token=' + encodeURIComponent(adminToken);
-                }
-                const watchlistLink = document.getElementById('nav-watchlist');
-                if (watchlistLink) {
-                    watchlistLink.href = '/watchlist?token=' + encodeURIComponent(adminToken);
-                }
-                // Update back button
-                const backBtn = document.getElementById('back-btn');
-                if (backBtn) {
-                    backBtn.href = '/?token=' + encodeURIComponent(adminToken);
+            const tokenFromUrl = urlParams.get('token');
+            if (tokenFromUrl) {
+                localStorage.setItem('scamhound_admin_token', tokenFromUrl);
+                urlParams.delete('token');
+                const cleanUrl = urlParams.toString() ? window.location.pathname + '?' + urlParams.toString() : window.location.pathname;
+                history.replaceState(null, '', cleanUrl);
+            }
+            const storedToken = localStorage.getItem('scamhound_admin_token');
+            if (storedToken) {
+                const logoutLink = document.getElementById('logout-link');
+                if (logoutLink) {
+                    logoutLink.style.display = 'inline';
                 }
             }
         })();
+
+        function doLogout() {
+            localStorage.removeItem('scamhound_admin_token');
+            window.location.href = '/';
+        }
 
         // Show/hide toggle functionality
         document.querySelectorAll('.toggle-btn').forEach(btn => {
@@ -540,11 +538,17 @@
             });
 
             try {
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                const adminToken = localStorage.getItem('scamhound_admin_token');
+                if (adminToken) {
+                    headers['Authorization'] = 'Bearer ' + adminToken;
+                }
+
                 const response = await fetch('/api/settings', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: headers,
                     body: JSON.stringify(data)
                 });
 

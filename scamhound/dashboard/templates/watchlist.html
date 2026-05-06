@@ -19,6 +19,7 @@
                 <a href="/">Dashboard</a>
                 <a href="/watchlist" class="active">Watchlist</a>
                 <a href="/settings" id="settings-nav-link" style="display:none">Settings</a>
+                <a href="#" id="logout-link" style="display:none" onclick="doLogout()">Logout</a>
             </nav>
             <p class="tagline">Real-time rug pull detection for Bags.fm</p>
         </div>
@@ -290,18 +291,33 @@
             }
         });
 
-        // Check for admin token in URL and show settings link if present
+        // Admin token management: extract from URL, persist in localStorage
         (function() {
             const urlParams = new URLSearchParams(window.location.search);
-            const adminToken = urlParams.get('token');
-            if (adminToken) {
+            const tokenFromUrl = urlParams.get('token');
+            if (tokenFromUrl) {
+                localStorage.setItem('scamhound_admin_token', tokenFromUrl);
+                urlParams.delete('token');
+                const cleanUrl = urlParams.toString() ? window.location.pathname + '?' + urlParams.toString() : window.location.pathname;
+                history.replaceState(null, '', cleanUrl);
+            }
+            const storedToken = localStorage.getItem('scamhound_admin_token');
+            if (storedToken) {
                 const settingsLink = document.getElementById('settings-nav-link');
                 if (settingsLink) {
                     settingsLink.style.display = 'inline';
-                    settingsLink.href = '/settings?token=' + encodeURIComponent(adminToken);
+                }
+                const logoutLink = document.getElementById('logout-link');
+                if (logoutLink) {
+                    logoutLink.style.display = 'inline';
                 }
             }
         })();
+
+        function doLogout() {
+            localStorage.removeItem('scamhound_admin_token');
+            window.location.href = '/';
+        }
     </script>
 </body>
 </html>

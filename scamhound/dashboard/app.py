@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 # Type imports removed - not needed
 
 from fastapi import (
-    FastAPI, Request, Header, Query, WebSocket, WebSocketDisconnect
+    FastAPI, Request, WebSocket, WebSocketDisconnect
 )
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -106,9 +106,9 @@ def _check_rate_limit(ip: str) -> tuple[bool, int, int]:
     return True, remaining, 0
 
 
-def _verify_auth(token_query: Optional[str], auth_header: Optional[str]) -> bool:
+def _verify_auth(request: Request) -> bool:
     """
-    Verify authentication token.
+    Verify authentication token via Authorization: Bearer header only.
     Returns True if authorized, False otherwise.
     If SCAMHOUND_ADMIN_TOKEN is not set, allows access (dev mode).
     """
@@ -118,11 +118,8 @@ def _verify_auth(token_query: Optional[str], auth_header: Optional[str]) -> bool
     if not expected_token:
         return True
     
-    # Check query param
-    if token_query and token_query == expected_token:
-        return True
-    
     # Check Bearer header
+    auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         provided_token = auth_header[7:]  # Remove "Bearer " prefix
         if provided_token == expected_token:
@@ -480,25 +477,12 @@ async def bubblemaps_quota():
 
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page(
-    request: Request,
-    token: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None)
-):
+async def settings_page(request: Request):
     """
     Settings page for configuring API keys.
     Shows masked key values only - never full values.
-    Requires auth token if SCAMHOUND_ADMIN_TOKEN is set.
+    Auth is checked client-side; saving requires Bearer token.
     """
-    if not _verify_auth(token, authorization):
-        return JSONResponse(
-            content={
-                "success": False,
-                "error": "Unauthorized. Invalid or missing token."
-            },
-            status_code=401
-        )
-
     masked_keys = get_masked_keys()
     return templates.TemplateResponse(
         "settings.html",
@@ -510,18 +494,14 @@ async def settings_page(
 
 
 @app.post("/api/settings")
-async def api_settings(
-    request: Request,
-    token: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None)
-):
+async def api_settings(request: Request):
     """
     API endpoint to save settings.
     Accepts JSON body with key-value pairs.
     Skips empty values and masked placeholders.
     Requires auth token if SCAMHOUND_ADMIN_TOKEN is set.
     """
-    if not _verify_auth(token, authorization):
+    if not _verify_auth(request):
         return JSONResponse(
             content={
                 "success": False,
@@ -583,11 +563,7 @@ async def autoscan_status():
 
 
 @app.post("/api/autoscan/toggle")
-async def autoscan_toggle(
-    request: Request,
-    token: Optional[str] = Query(None),
-    authorization: Optional[str] = Header(None)
-):
+async def autoscan_toggle(request: Request):
     """
     Toggle auto-scan on/off.
     When enabled: starts APScheduler to run monitor.run_cycle() every 60s
@@ -596,7 +572,7 @@ async def autoscan_toggle(
     Requires admin authentication.
     """
     # Verify admin authentication
-    if not _verify_auth(token, authorization):
+    if not _verify_auth(request):
         return JSONResponse(
             content={
                 "success": False,
