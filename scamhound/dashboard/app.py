@@ -39,6 +39,14 @@ _RATE_LIMIT_WINDOW = 60  # seconds
 _rate_limit_last_cleanup: float = 0
 _RATE_LIMIT_CLEANUP_INTERVAL = 300  # 5 minutes in seconds
 
+# API Key tier rate limits (calls per day)
+TIER_LIMITS = {
+    "free": 100,
+    "pro": 10000,
+    "builder": 100000,
+    "enterprise": -1,  # unlimited
+}
+
 # Auto-scan scheduler state
 _autoscan_scheduler: Optional[BackgroundScheduler] = None
 _autoscan_enabled: bool = False
@@ -126,6 +134,61 @@ def _verify_auth(request: Request) -> bool:
             return True
     
     return False
+
+
+def _check_api_key(request: Request) -> tuple:
+    """
+    Check API key from X-API-Key header.
+    Returns: (key_row_or_None, error_response_or_None)
+
+    If key is present and valid: (key_row, None)
+    If key is present but invalid: (None, JSONResponse with 401)
+    If key is present but over limit: (None, JSONResponse with 429)
+    If no key present: (None, None) -- fall back to IP rate limiting
+    """
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        return None, None  # No key = use IP-based rate limiting
+
+    key_row = database.validate_api_key(api_key)
+    if not key_row:
+        return None, JSONResponse(
+            content={"success": False, "error": "Invalid or expired API key."},
+            status_code=401
+        )
+
+    # Check daily limit
+    tier = key_row.get("tier", "free")
+    daily_limit = TIER_LIMITS.get(tier, 100)
+
+    if daily_limit != -1 and key_row.get("calls_today", 0) >= daily_limit:
+        return None, JSONResponse(
+            content={
+                "success": False,
+                "error": f"Daily API limit exceeded ({daily_limit} calls/day for {tier} tier). Resets at UTC midnight."
+            },
+            status_code=429,
+            headers={
+                "X-RateLimit-Limit": str(daily_limit),
+                "X-RateLimit-Remaining": "0",
+                "Retry-After": "3600"
+            }
+        )
+
+    return key_row, None
+
+
+def _add_rate_limit_headers(response: JSONResponse, key_row: dict) -> JSONResponse:
+    """Add X-RateLimit headers to response."""
+    if key_row:
+        tier = key_row.get("tier", "free")
+        daily_limit = TIER_LIMITS.get(tier, 100)
+        calls_today = key_row.get("calls_today", 0) + 1  # +1 for current request
+        remaining = max(0, daily_limit - calls_today) if daily_limit != -1 else "unlimited"
+
+        response.headers["X-RateLimit-Limit"] = str(daily_limit) if daily_limit != -1 else "unlimited"
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
+    return response
 
 
 # Create FastAPI app
@@ -230,20 +293,34 @@ async def widget(request: Request, token_mint: str):
 
 
 @app.get("/api/scores")
-async def api_scores(limit: int = 50):
+async def api_scores(request: Request, limit: int = 50):
     """
     API endpoint for scores.
     Returns JSON array of last N scores.
     """
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+
     scores = database.get_recent_scores(limit=limit)
-    return JSONResponse(content=scores)
+    response = JSONResponse(content=scores)
+
+    if key_row:
+        database.increment_api_key_usage(key_row["id"], "/api/scores")
+        response = _add_rate_limit_headers(response, key_row)
+
+    return response
 
 
 @app.get("/api/score/{token_mint}")
-async def api_score(token_mint: str):
+async def api_score(request: Request, token_mint: str):
     """
     API endpoint for a single token score.
     """
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+
     token = database.get_token_score(token_mint)
     
     if not token:
@@ -252,7 +329,13 @@ async def api_score(token_mint: str):
             status_code=404
         )
     
-    return JSONResponse(content=token)
+    response = JSONResponse(content=token)
+
+    if key_row:
+        database.increment_api_key_usage(key_row["id"], f"/api/score/{token_mint}")
+        response = _add_rate_limit_headers(response, key_row)
+
+    return response
 
 
 @app.get("/api/stats")
@@ -353,11 +436,15 @@ async def api_remove_from_watchlist(wallet_address: str):
 
 
 @app.get("/api/creator/{wallet_address}")
-async def api_creator_reputation(wallet_address: str):
+async def api_creator_reputation(request: Request, wallet_address: str):
     """
     Get aggregated reputation data for a creator wallet.
     Returns stats about all tokens launched by this creator.
     """
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+
     try:
         reputation = database.get_creator_reputation(wallet_address)
         
@@ -371,7 +458,13 @@ async def api_creator_reputation(wallet_address: str):
                 status_code=404
             )
         
-        return JSONResponse(content={"success": True, "data": reputation})
+        response = JSONResponse(content={"success": True, "data": reputation})
+
+        if key_row:
+            database.increment_api_key_usage(key_row["id"], f"/api/creator/{wallet_address}")
+            response = _add_rate_limit_headers(response, key_row)
+
+        return response
     
     except Exception as e:
         logger.error(f"[CREATOR] Error fetching creator reputation: {e}")
@@ -387,24 +480,30 @@ async def scan_token(request: Request):
     Manually trigger a scan for a specific token mint address.
     Accepts JSON: {"mint": "TOKEN_MINT_ADDRESS"}
     Returns the score result.
-    Rate limited: 5 scans per minute per IP.
+    Rate limited: 5 scans per minute per IP (or API key tier limit).
     """
-    # Rate limiting check
-    client_ip = request.client.host if request.client else "unknown"
-    allowed, remaining, retry_after = _check_rate_limit(client_ip)
-    
-    if not allowed:
-        return JSONResponse(
-            content={
-                "success": False,
-                "error": (
-                    f"Rate limit exceeded. Max {_MAX_SCANS_PER_MINUTE} "
-                    f"scans/min. Retry in {retry_after}s."
-                )
-            },
-            status_code=429,
-            headers={"Retry-After": str(retry_after)}
-        )
+    # Check API key first
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+
+    # If no API key, fall back to IP-based rate limiting
+    if not key_row:
+        client_ip = request.client.host if request.client else "unknown"
+        allowed, remaining, retry_after = _check_rate_limit(client_ip)
+        
+        if not allowed:
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": (
+                        f"Rate limit exceeded. Max {_MAX_SCANS_PER_MINUTE} "
+                        f"scans/min. Retry in {retry_after}s."
+                    )
+                },
+                status_code=429,
+                headers={"Retry-After": str(retry_after)}
+            )
     
     try:
         data = await request.json()
@@ -443,7 +542,13 @@ async def scan_token(request: Request):
                 status_code=500
             )
         
-        return JSONResponse(content={"success": True, "result": result})
+        response = JSONResponse(content={"success": True, "result": result})
+
+        if key_row:
+            database.increment_api_key_usage(key_row["id"], "/api/scan")
+            response = _add_rate_limit_headers(response, key_row)
+
+        return response
         
     except Exception as e:
         logger.error(f"[DASHBOARD] Error in scan_token: {e}")
@@ -637,11 +742,21 @@ async def autoscan_toggle(request: Request):
 
 
 @app.get("/api/export/csv")
-async def export_csv():
+async def export_csv(request: Request):
     """
     Export all scored tokens as CSV.
     Returns a downloadable CSV file.
+    Requires Pro tier or higher API key.
     """
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+    if not key_row or key_row.get("tier") not in ("pro", "builder", "enterprise"):
+        return JSONResponse(
+            content={"success": False, "error": "Export requires Pro tier or higher. Get an API key at /api/keys/generate"},
+            status_code=403
+        )
+
     try:
         # Get all scored tokens (no limit)
         scores = database.get_recent_scores(limit=10000)
@@ -698,11 +813,21 @@ async def export_csv():
 
 
 @app.get("/api/export/pdf")
-async def export_pdf():
+async def export_pdf(request: Request):
     """
     Export all scored tokens as PDF.
     Returns a downloadable PDF report.
+    Requires Pro tier or higher API key.
     """
+    key_row, key_error = _check_api_key(request)
+    if key_error:
+        return key_error
+    if not key_row or key_row.get("tier") not in ("pro", "builder", "enterprise"):
+        return JSONResponse(
+            content={"success": False, "error": "Export requires Pro tier or higher. Get an API key at /api/keys/generate"},
+            status_code=403
+        )
+
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import letter
@@ -857,11 +982,124 @@ async def export_pdf():
         )
 
 
+@app.post("/api/keys/generate")
+async def generate_api_key(request: Request):
+    """Generate a new free-tier API key."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(content={"success": False, "error": "Invalid JSON body"}, status_code=400)
+
+    email = body.get("email", "").strip()
+    name = body.get("name", "").strip()
+
+    if not email or "@" not in email:
+        return JSONResponse(content={"success": False, "error": "Valid email required"}, status_code=400)
+
+    # Limit: max 3 free keys per email
+    existing = database.get_api_keys_by_email(email)
+    active_keys = [k for k in existing if k.get("is_active")]
+    if len(active_keys) >= 3:
+        return JSONResponse(
+            content={"success": False, "error": "Maximum 3 active keys per email. Revoke an existing key first."},
+            status_code=400
+        )
+
+    result = database.create_api_key(email=email, tier="free", name=name)
+    daily_limit = TIER_LIMITS.get("free", 100)
+
+    return JSONResponse(content={
+        "success": True,
+        "key": result["key"],
+        "key_prefix": result["key_prefix"],
+        "tier": "free",
+        "daily_limit": daily_limit,
+        "message": "Save this key \u2014 it cannot be retrieved again."
+    })
+
+
+@app.get("/api/keys/status")
+async def api_key_status(request: Request):
+    """Get status and usage for the provided API key."""
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        return JSONResponse(content={"success": False, "error": "X-API-Key header required"}, status_code=401)
+
+    key_row = database.validate_api_key(api_key)
+    if not key_row:
+        return JSONResponse(content={"success": False, "error": "Invalid or expired API key"}, status_code=401)
+
+    tier = key_row.get("tier", "free")
+    daily_limit = TIER_LIMITS.get(tier, 100)
+
+    return JSONResponse(content={
+        "success": True,
+        "key_prefix": key_row["key_prefix"],
+        "email": key_row["email"],
+        "tier": tier,
+        "name": key_row.get("name", ""),
+        "calls_today": key_row.get("calls_today", 0),
+        "calls_total": key_row.get("calls_total", 0),
+        "daily_limit": daily_limit if daily_limit != -1 else "unlimited",
+        "last_used_at": key_row.get("last_used_at"),
+        "created_at": key_row.get("created_at"),
+        "expires_at": key_row.get("expires_at"),
+        "is_active": key_row.get("is_active")
+    })
+
+
+@app.delete("/api/keys/revoke")
+async def revoke_key(request: Request):
+    """Revoke an API key (admin only)."""
+    if not _verify_auth(request):
+        return JSONResponse(content={"success": False, "error": "Admin access required"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(content={"success": False, "error": "Invalid JSON body"}, status_code=400)
+
+    key_prefix = body.get("key_prefix", "").strip()
+    if not key_prefix:
+        return JSONResponse(content={"success": False, "error": "key_prefix required"}, status_code=400)
+
+    key_data = database.get_api_key_by_prefix(key_prefix)
+    if not key_data:
+        return JSONResponse(content={"success": False, "error": "Key not found"}, status_code=404)
+
+    database.revoke_api_key(key_data["id"])
+    return JSONResponse(content={"success": True, "message": f"Key {key_prefix} revoked"})
+
+
+@app.get("/api/keys/admin/list")
+async def list_api_keys(request: Request):
+    """List all API keys (admin only)."""
+    if not _verify_auth(request):
+        return JSONResponse(content={"success": False, "error": "Admin access required"}, status_code=401)
+
+    keys = database.get_all_api_keys()
+    return JSONResponse(content={"success": True, "keys": keys, "total": len(keys)})
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize database and config on startup."""
     load_config()
     database.init_db()
+    database.reset_daily_counters()
+
+    # Schedule daily counter reset at midnight UTC
+    from apscheduler.triggers.cron import CronTrigger
+    _daily_reset_scheduler = BackgroundScheduler()
+    _daily_reset_scheduler.add_job(
+        database.reset_daily_counters,
+        trigger=CronTrigger(hour=0, minute=0),
+        id="api_key_daily_reset",
+        name="API Key Daily Counter Reset",
+        replace_existing=True
+    )
+    _daily_reset_scheduler.start()
+    logger.info("[SCAMHOUND] Daily API key counter reset scheduled at UTC midnight")
     
     # Register WebSocket broadcast callback with monitor
     # This allows monitor to broadcast new scores without circular imports

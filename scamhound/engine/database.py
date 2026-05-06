@@ -6,7 +6,9 @@ SQLite persistence for token scores and alert tracking
 import sqlite3
 import os
 import json
-from datetime import datetime
+import hashlib
+import uuid
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 DB_PATH = os.getenv("DB_PATH", "scamhound.db")
@@ -71,10 +73,47 @@ def init_db() -> None:
     except Exception:
         pass  # Column already exists
     
+    # API Keys table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_hash TEXT UNIQUE NOT NULL,
+            key_prefix TEXT NOT NULL,
+            email TEXT NOT NULL,
+            tier TEXT NOT NULL DEFAULT 'free',
+            name TEXT DEFAULT '',
+            calls_today INTEGER DEFAULT 0,
+            calls_total INTEGER DEFAULT 0,
+            last_used_at TEXT,
+            last_reset_date TEXT,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT
+        )
+    """)
+
+    # API Usage Log table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_usage_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_id INTEGER NOT NULL,
+            endpoint TEXT NOT NULL,
+            status_code INTEGER,
+            response_ms INTEGER,
+            logged_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (key_id) REFERENCES api_keys(id)
+        )
+    """)
+
+    conn.commit()
+
     # Create indexes for common queries
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_creator_wallet ON scored_tokens(creator_wallet)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_score ON scored_tokens(risk_score)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_token_mint ON scored_tokens(token_mint)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_email ON api_keys(email)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_key_date ON api_usage_log(key_id, logged_at)")
     
     conn.commit()
     conn.close()
@@ -413,3 +452,163 @@ def get_creator_reputation(wallet_address: str) -> Optional[Dict[str, Any]]:
         "critical_count": critical_count,
         "tokens": tokens
     }
+
+
+# ============================================================================
+# API Key Management Functions
+# ============================================================================
+
+def create_api_key(email: str, tier: str = "free", name: str = "") -> dict:
+    """Generate a new API key. Returns the raw key (shown once) and metadata."""
+    raw_key = f"sh_{uuid.uuid4()}"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    key_prefix = raw_key[:11]  # "sh_" + first 8 chars of UUID
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO api_keys (key_hash, key_prefix, email, tier, name, created_at, last_reset_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (key_hash, key_prefix, email, tier, name, now, now[:10])
+        )
+        conn.commit()
+        return {
+            "key": raw_key,
+            "key_prefix": key_prefix,
+            "email": email,
+            "tier": tier,
+            "name": name,
+            "created_at": now
+        }
+    finally:
+        conn.close()
+
+
+def validate_api_key(raw_key: str) -> Optional[dict]:
+    """Validate an API key. Returns key row dict if valid, None if invalid/expired/inactive."""
+    if not raw_key or not raw_key.startswith("sh_"):
+        return None
+
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM api_keys WHERE key_hash = ?", (key_hash,)
+        ).fetchone()
+
+        if not row:
+            return None
+
+        result = dict(row)
+
+        # Check if active
+        if not result.get("is_active"):
+            return None
+
+        # Check if expired
+        if result.get("expires_at"):
+            expires = datetime.fromisoformat(result["expires_at"])
+            if datetime.now(timezone.utc) > expires:
+                return None
+
+        return result
+    finally:
+        conn.close()
+
+
+def increment_api_key_usage(key_id: int, endpoint: str, status_code: int = 200, response_ms: int = 0):
+    """Increment usage counters and log the request."""
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+
+    conn = get_connection()
+    try:
+        # Check if we need to reset daily counter
+        row = conn.execute(
+            "SELECT last_reset_date FROM api_keys WHERE id = ?", (key_id,)
+        ).fetchone()
+
+        if row and row["last_reset_date"] != today:
+            conn.execute(
+                "UPDATE api_keys SET calls_today = 1, calls_total = calls_total + 1, last_used_at = ?, last_reset_date = ? WHERE id = ?",
+                (now.isoformat(), today, key_id)
+            )
+        else:
+            conn.execute(
+                "UPDATE api_keys SET calls_today = calls_today + 1, calls_total = calls_total + 1, last_used_at = ? WHERE id = ?",
+                (now.isoformat(), key_id)
+            )
+
+        # Log usage
+        conn.execute(
+            "INSERT INTO api_usage_log (key_id, endpoint, status_code, response_ms) VALUES (?, ?, ?, ?)",
+            (key_id, endpoint, status_code, response_ms)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def reset_daily_counters():
+    """Reset calls_today for all keys where last_reset_date is not today."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE api_keys SET calls_today = 0, last_reset_date = ? WHERE last_reset_date != ? OR last_reset_date IS NULL",
+            (today, today)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_api_keys_by_email(email: str) -> list:
+    """Get all API keys for a given email."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, key_prefix, email, tier, name, calls_today, calls_total, last_used_at, is_active, created_at, expires_at FROM api_keys WHERE email = ?",
+            (email,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def revoke_api_key(key_id: int) -> bool:
+    """Revoke an API key by setting is_active to False."""
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "UPDATE api_keys SET is_active = FALSE WHERE id = ?", (key_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_all_api_keys() -> list:
+    """Get all API keys with usage stats (admin)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, key_prefix, email, tier, name, calls_today, calls_total, last_used_at, is_active, created_at, expires_at FROM api_keys ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_api_key_by_prefix(key_prefix: str) -> Optional[dict]:
+    """Get a single API key by its prefix."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM api_keys WHERE key_prefix = ?", (key_prefix,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
