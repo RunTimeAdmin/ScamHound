@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 import anthropic
 
@@ -438,7 +438,7 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
             "lifetime_fees_sol": token_data.get("lifetime_fees_sol", 0),
             "token_age_minutes": token_data.get("token_age_minutes"),
             "token_status": token_data.get("token_status", "unknown"),
-            "scored_at": datetime.utcnow().isoformat(),
+            "scored_at": datetime.now(timezone.utc).isoformat(),
             "created_at": token_data.get("created_at"),
             "score_source": f"ai_{provider}"
         }
@@ -479,7 +479,7 @@ def _fallback_score(token_data: Dict[str, Any], reason: str) -> Dict[str, Any]:
         "lifetime_fees_sol": token_data.get("lifetime_fees_sol", 0),
         "token_age_minutes": token_data.get("token_age_minutes"),
         "token_status": token_data.get("token_status", "unknown"),
-        "scored_at": datetime.utcnow().isoformat(),
+        "scored_at": datetime.now(timezone.utc).isoformat(),
         "created_at": token_data.get("created_at"),
         "score_source": "fallback"
     }

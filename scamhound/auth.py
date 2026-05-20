@@ -3,7 +3,7 @@ Google OAuth authentication and JWT session management for ScamHound.
 """
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 from authlib.integrations.starlette_client import OAuth
@@ -59,8 +59,8 @@ def create_jwt(user_id: int, email: str, is_admin: bool) -> str:
         "sub": str(user_id),
         "email": email,
         "is_admin": is_admin,
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
-        "iat": datetime.utcnow()
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS),
+        "iat": datetime.now(timezone.utc)
     }
     return jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
 

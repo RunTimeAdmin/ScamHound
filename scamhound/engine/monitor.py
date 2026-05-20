@@ -348,7 +348,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             "token_mint": token_mint,
             "name": "Unknown",
             "symbol": "UNKNOWN",
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
         
         # Source profile by platform hint:
