@@ -10,6 +10,7 @@ import threading
 import csv
 import io
 import re
+import uuid
 from xml.sax.saxutils import escape
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -235,6 +236,17 @@ app = FastAPI(
     description="On-demand rug pull detection for Solana",
     version="1.0.0"
 )
+
+
+@app.middleware("http")
+async def attach_request_id(request: Request, call_next):
+    """Attach a per-request ID for log and client correlation."""
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
 
 # Session middleware required by Authlib for OAuth state
 app.add_middleware(SessionMiddleware, secret_key=get_jwt_secret())
@@ -927,7 +939,11 @@ async def scan_token(request: Request):
                 status_code=400
             )
         
-        logger.info(f"[DASHBOARD] Manual scan requested for: {token_mint[:8]}...")
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.info(
+            f"[DASHBOARD] req={request_id} Manual scan requested for: "
+            f"{token_mint[:8]}..."
+        )
 
         # Run the scan using the async version for parallel API calls
         result = await monitor.scan_single_token_async(
@@ -970,7 +986,8 @@ async def scan_token(request: Request):
         return response
         
     except Exception as e:
-        logger.error(f"[DASHBOARD] Error in scan_token: {e}")
+        request_id = getattr(request.state, "request_id", "unknown")
+        logger.error(f"[DASHBOARD] req={request_id} Error in scan_token: {e}")
         return JSONResponse(
             content={"success": False, "error": str(e)},
             status_code=500
@@ -997,6 +1014,8 @@ async def api_scan_batch(request: Request):
     if key_row["tier"] not in ("builder", "enterprise"):
         return JSONResponse(status_code=403, content={"error": "Batch scan requires Builder tier or higher"})
     
+    request_id = getattr(request.state, "request_id", "unknown")
+
     # 2. Parse body
     try:
         body = await request.json()
@@ -1057,6 +1076,10 @@ async def api_scan_batch(request: Request):
         task = asyncio.create_task(_background_scan(to_scan))
         _background_scan_tasks.add(task)
         task.add_done_callback(_background_scan_tasks.discard)
+        logger.info(
+            f"[DASHBOARD] req={request_id} queued {len(to_scan)} "
+            "batch scans in background"
+        )
     
     # 6. Return response
     response = JSONResponse(content={
