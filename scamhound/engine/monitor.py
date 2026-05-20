@@ -397,6 +397,28 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                     birdeye_symbol = overview.get("symbol")
                     if birdeye_symbol:
                         token_data["symbol"] = birdeye_symbol
+
+                # Prefer real holder count from market overview when available.
+                # Helius getTokenLargestAccounts only gives top holders, so earlier
+                # values can be rough estimates for newer scans.
+                holder_count = (
+                    overview.get("holderCount")
+                    or overview.get("holder_count")
+                    or overview.get("holders")
+                    or overview.get("holder")
+                    or overview.get("uniqueHolders")
+                    or overview.get("holdersCount")
+                )
+                if holder_count is not None:
+                    try:
+                        normalized_holder_count = int(float(holder_count))
+                    except (TypeError, ValueError):
+                        normalized_holder_count = None
+
+                    if normalized_holder_count is not None and normalized_holder_count >= 0:
+                        existing_holders = token_data.get("holders") or {}
+                        existing_holders["total_holder_count"] = normalized_holder_count
+                        token_data["holders"] = existing_holders
         
         # Get creator wallet
         creator_wallet = token_data.get("creator", {}).get("wallet")

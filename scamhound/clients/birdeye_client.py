@@ -175,9 +175,27 @@ def get_liquidity_data(token_mint: str, overview_data: Optional[Dict[str, Any]] 
         if not isinstance(data, dict):
             return None
     
-    # Extract liquidity and marketcap from token_overview
-    liquidity_usd = data.get("liquidity", 0)
-    marketcap = data.get("marketCap", 0) or data.get("mc", 0) or data.get("fdv", 0)
+    # Extract liquidity and market cap from either:
+    # 1) raw Birdeye payload keys (marketCap/mc/fdv), or
+    # 2) normalized overview dict keys returned by get_token_overview (marketcap).
+    raw_liquidity = data.get("liquidity", 0)
+    raw_marketcap = (
+        data.get("marketCap", 0)
+        or data.get("marketcap", 0)
+        or data.get("mc", 0)
+        or data.get("fdv", 0)
+    )
+
+    # Birdeye can return numeric strings in some fields; coerce safely.
+    try:
+        liquidity_usd = float(raw_liquidity or 0)
+    except (TypeError, ValueError):
+        liquidity_usd = 0.0
+
+    try:
+        marketcap = float(raw_marketcap or 0)
+    except (TypeError, ValueError):
+        marketcap = 0.0
     
     liquidity_to_mcap = 0.0
     if marketcap > 0 and liquidity_usd > 0:
