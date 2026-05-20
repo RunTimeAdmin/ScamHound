@@ -40,6 +40,7 @@ from auth import (
 from dashboard.routers.auth import create_auth_router
 from dashboard.routers.health import create_health_router
 from dashboard.routers.alerts import create_alerts_router
+from dashboard.routers.keys import create_keys_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -400,6 +401,13 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 app.include_router(create_auth_router(templates))
 app.include_router(create_health_router())
 app.include_router(create_alerts_router(lambda request: get_current_user(request)))
+app.include_router(
+    create_keys_router(
+        lambda request: get_current_user(request),
+        lambda request: _verify_auth(request),
+        TIER_LIMITS,
+    )
+)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1611,7 +1619,7 @@ async def export_pdf(request: Request):
         )
 
 
-@app.post("/api/keys/generate")
+@app.post("/api/_legacy/keys/generate")
 async def generate_api_key(request: Request):
     """Generate a new free-tier API key for the authenticated user."""
     user = get_current_user(request)
@@ -1683,7 +1691,7 @@ async def generate_api_key(request: Request):
     })
 
 
-@app.get("/api/keys/status")
+@app.get("/api/_legacy/keys/status")
 async def api_key_status(request: Request):
     """Get status and usage for the provided API key."""
     api_key = request.headers.get("X-API-Key")
@@ -1713,7 +1721,7 @@ async def api_key_status(request: Request):
     })
 
 
-@app.delete("/api/keys/revoke")
+@app.delete("/api/_legacy/keys/revoke")
 async def revoke_key(request: Request):
     """Revoke an API key (admin only)."""
     if not _verify_auth(request):
@@ -1736,7 +1744,7 @@ async def revoke_key(request: Request):
     return JSONResponse(content={"success": True, "message": f"Key {key_prefix} revoked"})
 
 
-@app.get("/api/keys/admin/list")
+@app.get("/api/_legacy/keys/admin/list")
 async def list_api_keys(request: Request):
     """List all API keys (admin only)."""
     if not _verify_auth(request):
