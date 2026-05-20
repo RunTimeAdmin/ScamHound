@@ -49,3 +49,20 @@ def test_calculate_risk_score_invalid_numeric_falls_back_to_default():
 
     assert result["risk_score"] == 50
     assert result["risk_level"] == "MEDIUM"
+
+
+def test_calculate_risk_score_parses_json_with_preamble_and_trailer():
+    """Scorer should parse JSON even with wrapper text around it."""
+    llm_payload = (
+        "Here is the analysis:\n"
+        '{"risk_score":72,"risk_level":"HIGH","verdict":"wrapped","top_risk_factors":[],"top_safe_signals":[]}'
+        "\nThanks."
+    )
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(_sample_token_data())
+
+    assert result["risk_score"] == 72
+    assert result["risk_level"] == "HIGH"
+    assert result["verdict"] == "wrapped"

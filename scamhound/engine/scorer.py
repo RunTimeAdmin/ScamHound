@@ -155,6 +155,34 @@ def _normalize_string_list(
     return normalized
 
 
+def _parse_llm_json_response(response_text: str) -> Dict[str, Any]:
+    """Parse JSON object from LLM output with tolerant extraction."""
+    text = (response_text or "").strip()
+
+    # Fast path: already clean JSON
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Fenced markdown block
+    if "```json" in text:
+        candidate = text.split("```json", 1)[1].split("```", 1)[0].strip()
+        return json.loads(candidate)
+    if "```" in text:
+        candidate = text.split("```", 1)[1].split("```", 1)[0].strip()
+        return json.loads(candidate)
+
+    # Fallback: extract first JSON object-like span
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(text[start : end + 1])
+
+    # Preserve original parse exception semantics for callers
+    return json.loads(text)
+
+
 
 SYSTEM_PROMPT = """You are ScamHound, an expert crypto security analyst specializing in rug pull detection on the Solana blockchain. You analyze token data and return a structured risk assessment.
 
@@ -393,16 +421,7 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
     
     try:
         response_text = _call_llm(SYSTEM_PROMPT, user_prompt)
-        response_text = response_text.strip()
-        
-        # Try to parse JSON from the response
-        # Sometimes LLMs might add markdown code blocks
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-        
-        result = json.loads(response_text)
+        result = _parse_llm_json_response(response_text)
         
         normalized_score = _coerce_risk_score(result.get("risk_score", 50))
         normalized_level = _normalize_risk_level(
