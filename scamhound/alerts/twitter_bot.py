@@ -174,11 +174,11 @@ def send_pending_alerts() -> None:
         logger.info("[TWITTER] Skipping alerts - Twitter not enabled")
         return
     
-    # Get unnotified high-risk tokens
+    # Get approved, unnotified high-risk tokens
     high_risk_tokens = database.get_high_risk_unnotified(threshold=RISK_THRESHOLD)
     
     if not high_risk_tokens:
-        logger.info("[TWITTER] No new high-risk tokens to alert")
+        logger.info("[TWITTER] No approved high-risk tokens to alert")
         return
     
     logger.info(f"[TWITTER] Found {len(high_risk_tokens)} tokens to alert")

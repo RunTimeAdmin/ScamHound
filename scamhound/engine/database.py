@@ -192,6 +192,16 @@ def init_db() -> None:
     except Exception:
         pass  # Column already exists
 
+    # Add tweet approval columns if not exists
+    try:
+        cursor.execute("ALTER TABLE scored_tokens ADD COLUMN tweet_approved_at TEXT")
+    except Exception:
+        pass  # Column already exists
+    try:
+        cursor.execute("ALTER TABLE scored_tokens ADD COLUMN tweet_approved_by TEXT")
+    except Exception:
+        pass  # Column already exists
+
     conn.commit()
     conn.close()
     print("[SCAMHOUND] Database initialized")
@@ -462,13 +472,15 @@ get_score_by_mint = get_token_score
 
 
 def get_high_risk_unnotified(threshold: int = 65) -> List[Dict[str, Any]]:
-    """Get high-risk tokens that haven't been tweeted yet."""
+    """Get approved high-risk tokens that haven't been tweeted yet."""
     conn = get_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
         SELECT * FROM scored_tokens 
-        WHERE risk_score >= ? AND tweet_sent = FALSE
+        WHERE risk_score >= ?
+          AND tweet_sent = FALSE
+          AND tweet_approved_at IS NOT NULL
         ORDER BY risk_score DESC
     """, (threshold,))
     
@@ -497,6 +509,55 @@ def mark_tweet_sent(token_mint: str) -> None:
     
     conn.commit()
     conn.close()
+
+
+def approve_tweet(token_mint: str, approved_by: str = "") -> bool:
+    """Approve a token alert for tweet posting."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE scored_tokens
+        SET tweet_approved_at = ?, tweet_approved_by = ?
+        WHERE token_mint = ?
+        """,
+        (datetime.now(timezone.utc).isoformat(), approved_by, token_mint),
+    )
+    approved = cursor.rowcount > 0
+
+    conn.commit()
+    conn.close()
+    return approved
+
+
+def get_pending_tweet_approvals(limit: int = 100) -> List[Dict[str, Any]]:
+    """Get high-risk tokens awaiting tweet approval."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT * FROM scored_tokens
+        WHERE risk_score >= 65
+          AND tweet_sent = FALSE
+          AND tweet_approved_at IS NULL
+        ORDER BY risk_score DESC, scored_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        result = dict(row)
+        result["top_risk_factors"] = json.loads(result.get("top_risk_factors", "[]"))
+        result["top_safe_signals"] = json.loads(result.get("top_safe_signals", "[]"))
+        results.append(result)
+
+    return results
 
 
 def get_stats() -> Dict[str, int]:

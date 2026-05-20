@@ -239,7 +239,7 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     Note: Birdeye API limit must be 1-50 for /defi/txs/token endpoint.
     
     Returns:
-    - wash_trading_score: float 0.0-1.0
+    - two_sided_trader_ratio: float 0.0-1.0
     - large_sell_pressure: bool
     - avg_trade_size_usd: float
     - unique_trader_count: int
@@ -291,21 +291,25 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
         
         total_volume += amount_usd
     
-    # Detect wash trading (same wallets repeatedly buying and selling)
-    wash_traders = 0
+    # Heuristic only: ratio of wallets with both buy and sell activity.
+    # This is not definitive wash-trading detection.
+    two_sided_traders = 0
     for trader in unique_traders:
         buys = trader_buy_count[trader]
         sells = trader_sell_count[trader]
-        # If a trader has both buys and sells, could be wash trading
         if buys > 0 and sells > 0:
-            wash_traders += 1
+            two_sided_traders += 1
     
-    wash_trading_score = wash_traders / len(unique_traders) if unique_traders else 0.0
+    two_sided_ratio = (
+        two_sided_traders / len(unique_traders) if unique_traders else 0.0
+    )
     
     avg_trade_size = total_volume / len(trades) if trades else 0
     
     return {
-        "wash_trading_score": round(wash_trading_score, 2),
+        "two_sided_trader_ratio": round(two_sided_ratio, 2),
+        # Backward-compatible alias retained for existing consumers.
+        "wash_trading_score": round(two_sided_ratio, 2),
         "large_sell_pressure": large_sells > 3,
         "avg_trade_size_usd": round(avg_trade_size, 2),
         "unique_trader_count": len(unique_traders)

@@ -422,7 +422,12 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             token_data["liquidity_usd"] = liquidity.get("liquidity_usd", 0)
             token_data["liquidity_to_mcap_ratio"] = liquidity.get("liquidity_to_mcap_ratio", 0)
             token_data["unique_trader_count"] = trades.get("unique_trader_count", 0)
-            token_data["wash_trading_score"] = trades.get("wash_trading_score", 0)
+            token_data["two_sided_trader_ratio"] = trades.get(
+                "two_sided_trader_ratio",
+                trades.get("wash_trading_score", 0),
+            )
+            # Legacy alias preserved for compatibility with older consumers.
+            token_data["wash_trading_score"] = token_data["two_sided_trader_ratio"]
             token_data["large_sell_pressure"] = trades.get("large_sell_pressure", False)
             
             # Try to get token name/symbol from Birdeye overview

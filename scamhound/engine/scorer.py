@@ -191,7 +191,7 @@ Key risk factors to weigh heavily (adjusted for token age):
 - Any prior rug pulls from wallet = critical (ALWAYS matters)
 - Holder wallet clustering score >0.6 = critical, >0.4 = high (ALWAYS matters - creator controlling multiple wallets is suspicious even for new tokens)
 - Liquidity/MCap ratio <0.05 = critical, <0.10 = high (ONLY if token > 1 hour old)
-- Wash trading score >0.7 = critical, >0.5 = high
+- Two-sided trader ratio >0.7 = critical, >0.5 = high (heuristic only; not definitive wash-trading proof)
 - Large sell pressure = high
 - Creator royalty >5% = medium concern
 - BubbleMaps decentralization score <30 = critical, <50 = high (indicates centralized control)
@@ -258,7 +258,10 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     liquidity_usd = token_data.get("liquidity_usd", 0)
     liquidity_ratio = token_data.get("liquidity_to_mcap_ratio", 0)
     unique_traders = token_data.get("unique_trader_count", 0)
-    wash_score = token_data.get("wash_trading_score", 0)
+    two_sided_ratio = token_data.get(
+        "two_sided_trader_ratio",
+        token_data.get("wash_trading_score", 0),
+    )
     large_sell = token_data.get("large_sell_pressure", False)
     lifetime_fees = token_data.get("lifetime_fees_sol", 0)
     
@@ -298,7 +301,7 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
         pumpfun_note = ("\nIMPORTANT: This is a pump.fun token. High initial holder concentration is "
                         "expected due to the bonding curve mechanism and does NOT indicate rug pull risk "
                         "by itself. Focus on other risk signals (creator history, wallet clustering, "
-                        "wash trading).")
+                        "two-sided trader behavior).")
         if bonding_curve_excluded:
             pumpfun_note += ("\nThe bonding curve address has been excluded from holder concentration "
                             "analysis. The percentages shown reflect real wallet distribution only.")
@@ -355,7 +358,7 @@ MARKET DATA (Birdeye):
 - Liquidity (USD): ${liquidity_usd:,.2f}
 - Liquidity to market cap ratio: {liquidity_ratio}
 - Unique traders (24h): {unique_traders}
-- Wash trading score (0.0-1.0): {wash_score}
+- Two-sided trader ratio (0.0-1.0, heuristic): {two_sided_ratio}
 - Large sell pressure detected: {large_sell}
 
 Respond with JSON only."""

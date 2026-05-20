@@ -1524,24 +1524,60 @@ async def export_pdf(request: Request):
 
 @app.post("/api/keys/generate")
 async def generate_api_key(request: Request):
-    """Generate a new free-tier API key."""
+    """Generate a new free-tier API key for the authenticated user."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(
+            content={"success": False, "error": "Authentication required"},
+            status_code=401
+        )
+
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse(content={"success": False, "error": "Invalid JSON body"}, status_code=400)
+        return JSONResponse(
+            content={"success": False, "error": "Invalid JSON body"},
+            status_code=400
+        )
 
-    email = body.get("email", "").strip()
+    if not isinstance(body, dict):
+        return JSONResponse(
+            content={"success": False, "error": "Invalid request body"},
+            status_code=400
+        )
+
+    user_email = str(user.get("email", "")).strip().lower()
+    requested_email = str(body.get("email", "")).strip().lower()
     name = body.get("name", "").strip()
 
+    email = requested_email or user_email
     if not email or "@" not in email:
-        return JSONResponse(content={"success": False, "error": "Valid email required"}, status_code=400)
+        return JSONResponse(
+            content={"success": False, "error": "Valid email required"},
+            status_code=400
+        )
+
+    # Non-admin users can only generate keys for their own account.
+    if requested_email and requested_email != user_email and not user.get("is_admin"):
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "Cannot generate keys for another user"
+            },
+            status_code=403
+        )
 
     # Limit: max 3 free keys per email
     existing = database.get_api_keys_by_email(email)
     active_keys = [k for k in existing if k.get("is_active")]
     if len(active_keys) >= 3:
         return JSONResponse(
-            content={"success": False, "error": "Maximum 3 active keys per email. Revoke an existing key first."},
+            content={
+                "success": False,
+                "error": (
+                    "Maximum 3 active keys per email. Revoke an existing key first."
+                )
+            },
             status_code=400
         )
 
@@ -1586,6 +1622,55 @@ async def api_key_status(request: Request):
         "expires_at": key_row.get("expires_at"),
         "is_active": key_row.get("is_active")
     })
+
+
+@app.get("/api/alerts/pending")
+async def list_pending_alerts(request: Request, limit: int = 100):
+    """List high-risk alerts that require admin tweet approval."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse(
+            content={"success": False, "error": "Admin access required"},
+            status_code=401
+        )
+
+    capped_limit = min(max(limit, 1), 500)
+    pending = database.get_pending_tweet_approvals(limit=capped_limit)
+    return JSONResponse(
+        content={"success": True, "pending": pending, "count": len(pending)}
+    )
+
+
+@app.post("/api/alerts/{token_mint}/approve")
+async def approve_alert_for_tweet(request: Request, token_mint: str):
+    """Approve a token alert for Twitter posting."""
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse(
+            content={"success": False, "error": "Admin access required"},
+            status_code=401
+        )
+
+    token_mint = (token_mint or "").strip()
+    if not token_mint:
+        return JSONResponse(
+            content={"success": False, "error": "token_mint required"},
+            status_code=400
+        )
+
+    approved = database.approve_tweet(token_mint, approved_by=user.get("email", ""))
+    if not approved:
+        return JSONResponse(
+            content={"success": False, "error": "Token not found"},
+            status_code=404
+        )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": f"Approved tweet for {token_mint}",
+        }
+    )
 
 
 @app.delete("/api/keys/revoke")
