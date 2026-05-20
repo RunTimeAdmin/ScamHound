@@ -504,7 +504,7 @@ async def api_scores(
             return JSONResponse({"error": "Authentication required"}, status_code=401)
 
     # Validate risk_level
-    allowed_risk_levels = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    allowed_risk_levels = ["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNSCORED"]
     if risk_level is not None and risk_level not in allowed_risk_levels:
         return JSONResponse(
             content={"success": False, "error": f"Invalid risk_level. Allowed: {allowed_risk_levels}"},

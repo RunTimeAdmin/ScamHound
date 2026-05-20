@@ -483,10 +483,13 @@ def _fallback_score(token_data: Dict[str, Any], reason: str) -> Dict[str, Any]:
         "token_mint": token_data.get("token_mint"),
         "name": token_data.get("name"),
         "symbol": token_data.get("symbol"),
-        "risk_score": 50,
-        "risk_level": "MEDIUM",
-        "verdict": "AI analysis temporarily unavailable. Score is preliminary based on on-chain data only. Will be re-scored automatically.",
-        "top_risk_factors": ["AI scoring pending — preliminary assessment only"],
+        "risk_score": 0,
+        "risk_level": "UNSCORED",
+        "verdict": (
+            "AI analysis temporarily unavailable. "
+            "Token marked as unscored and will be re-scored automatically."
+        ),
+        "top_risk_factors": [f"AI scoring pending ({reason})"],
         "top_safe_signals": [],
         "creator_wallet": token_data.get("creator", {}).get("wallet"),
         "creator_username": token_data.get("creator", {}).get("username"),

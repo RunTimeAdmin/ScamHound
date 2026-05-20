@@ -66,3 +66,14 @@ def test_calculate_risk_score_parses_json_with_preamble_and_trailer():
     assert result["risk_score"] == 72
     assert result["risk_level"] == "HIGH"
     assert result["verdict"] == "wrapped"
+
+
+def test_calculate_risk_score_marks_fallback_as_unscored():
+    """LLM failures should produce explicit unscored fallback output."""
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", side_effect=ValueError("boom")):
+            result = scorer.calculate_risk_score(_sample_token_data())
+
+    assert result["risk_score"] == 0
+    assert result["risk_level"] == "UNSCORED"
+    assert result["score_source"] == "fallback"

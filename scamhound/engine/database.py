@@ -864,7 +864,10 @@ def get_creator_leaderboard(sort_by: str = "avg_risk", order: str = "desc", limi
             SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) as low_risk_count,
             MAX(scored_at) as last_active
         FROM scored_tokens
-        WHERE creator_wallet IS NOT NULL AND creator_wallet != ''
+        WHERE creator_wallet IS NOT NULL
+          AND creator_wallet != ''
+          AND risk_level != 'UNSCORED'
+          AND risk_score IS NOT NULL
         GROUP BY creator_wallet
         HAVING COUNT(*) >= ?
         ORDER BY {validated_sort_column} {validated_order}
