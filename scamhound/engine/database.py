@@ -1147,31 +1147,40 @@ def check_and_increment_scan(user_id: int, is_admin: bool) -> dict:
 
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT scans_today, last_scan_date FROM users WHERE id = ?", (user_id,))
-    row = c.fetchone()
+    try:
+        # Serialize competing scan updates for this DB.
+        c.execute("BEGIN IMMEDIATE")
+        c.execute(
+            "SELECT scans_today, last_scan_date FROM users WHERE id = ?",
+            (user_id,),
+        )
+        row = c.fetchone()
 
-    if not row:
+        if not row:
+            conn.rollback()
+            return {"allowed": False, "scans_today": 0, "limit": limit}
+
+        scans_today = row["scans_today"] or 0
+        last_scan_date = row["last_scan_date"]
+
+        # Reset if new day
+        if last_scan_date != today:
+            scans_today = 0
+
+        if scans_today >= limit:
+            conn.rollback()
+            return {"allowed": False, "scans_today": scans_today, "limit": limit}
+
+        # Increment
+        new_scans_today = scans_today + 1
+        c.execute(
+            "UPDATE users SET scans_today = ?, last_scan_date = ? WHERE id = ?",
+            (new_scans_today, today, user_id),
+        )
+        conn.commit()
+        return {"allowed": True, "scans_today": new_scans_today, "limit": limit}
+    finally:
         conn.close()
-        return {"allowed": False, "scans_today": 0, "limit": limit}
-
-    scans_today = row["scans_today"] or 0
-    last_scan_date = row["last_scan_date"]
-
-    # Reset if new day
-    if last_scan_date != today:
-        scans_today = 0
-
-    if scans_today >= limit:
-        conn.close()
-        return {"allowed": False, "scans_today": scans_today, "limit": limit}
-
-    # Increment
-    c.execute("UPDATE users SET scans_today = ?, last_scan_date = ? WHERE id = ?",
-              (scans_today + 1, today, user_id))
-    conn.commit()
-    conn.close()
-
-    return {"allowed": True, "scans_today": scans_today + 1, "limit": limit}
 
 
 def get_tokens_for_rescore(max_age_days: int = 7, min_score: int = 40, limit: int = 25) -> List[Dict[str, Any]]:
