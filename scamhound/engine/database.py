@@ -71,13 +71,13 @@ def init_db() -> None:
     # Add score_source column if not exists
     try:
         cursor.execute("ALTER TABLE scored_tokens ADD COLUMN score_source TEXT DEFAULT 'ai'")
-    except Exception:
+    except sqlite3.OperationalError:
         pass  # Column already exists
 
     # Add platform column if not exists
     try:
         cursor.execute("ALTER TABLE scored_tokens ADD COLUMN platform TEXT DEFAULT 'bags'")
-    except Exception:
+    except sqlite3.OperationalError:
         pass  # Column already exists
     
     # API Keys table
@@ -175,7 +175,7 @@ def init_db() -> None:
     # Add user_id column to scored_tokens if not exists
     try:
         cursor.execute("ALTER TABLE scored_tokens ADD COLUMN user_id INTEGER")
-    except Exception:
+    except sqlite3.OperationalError:
         pass  # Column already exists
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_scored_user ON scored_tokens(user_id)")
@@ -183,23 +183,23 @@ def init_db() -> None:
     # Add scans_today column to users if not exists
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN scans_today INTEGER DEFAULT 0")
-    except Exception:
+    except sqlite3.OperationalError:
         pass  # Column already exists
 
     # Add last_scan_date column to users if not exists
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN last_scan_date TEXT")
-    except Exception:
+    except sqlite3.OperationalError:
         pass  # Column already exists
 
     # Add tweet approval columns if not exists
     try:
         cursor.execute("ALTER TABLE scored_tokens ADD COLUMN tweet_approved_at TEXT")
-    except Exception:
+    except sqlite3.OperationalError:
         pass  # Column already exists
     try:
         cursor.execute("ALTER TABLE scored_tokens ADD COLUMN tweet_approved_by TEXT")
-    except Exception:
+    except sqlite3.OperationalError:
         pass  # Column already exists
 
     conn.commit()
