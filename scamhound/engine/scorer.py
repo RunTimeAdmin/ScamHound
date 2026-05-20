@@ -15,6 +15,8 @@ import anthropic
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+ALLOWED_RISK_LEVELS = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+
 # Anthropic client singleton
 _anthropic_client = None
 _anthropic_client_key = None
@@ -104,6 +106,53 @@ def _call_anthropic(system_prompt: str, user_prompt: str) -> str:
     )
 
     return response.content[0].text
+
+
+def _coerce_risk_score(value: Any, default: int = 50) -> int:
+    """Coerce model output risk score into bounded integer [0, 100]."""
+    try:
+        score = int(float(value))
+    except (TypeError, ValueError):
+        score = default
+    return max(0, min(100, score))
+
+
+def _risk_level_from_score(score: int) -> str:
+    """Derive canonical risk level from score ranges."""
+    if score <= 30:
+        return "LOW"
+    if score <= 60:
+        return "MEDIUM"
+    if score <= 80:
+        return "HIGH"
+    return "CRITICAL"
+
+
+def _normalize_risk_level(value: Any, score: int) -> str:
+    """Normalize risk level string and fallback to score-derived level."""
+    level = str(value or "").strip().upper()
+    if level in ALLOWED_RISK_LEVELS:
+        return level
+    return _risk_level_from_score(score)
+
+
+def _normalize_string_list(
+    value: Any,
+    max_items: int,
+    max_item_length: int,
+) -> list[str]:
+    """Normalize list-like model output into bounded clean strings."""
+    if not isinstance(value, list):
+        return []
+
+    normalized = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            normalized.append(text[:max_item_length])
+        if len(normalized) >= max_items:
+            break
+    return normalized
 
 
 
@@ -347,16 +396,30 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
         
         result = json.loads(response_text)
         
+        normalized_score = _coerce_risk_score(result.get("risk_score", 50))
+        normalized_level = _normalize_risk_level(
+            result.get("risk_level"), normalized_score
+        )
+        verdict = str(result.get("verdict", "Analysis complete.")).strip()
+        if not verdict:
+            verdict = "Analysis complete."
+        risk_factors = _normalize_string_list(
+            result.get("top_risk_factors", []), max_items=5, max_item_length=200
+        )
+        safe_signals = _normalize_string_list(
+            result.get("top_safe_signals", []), max_items=5, max_item_length=200
+        )
+
         # Build the complete score dict
         score_data = {
             "token_mint": token_data.get("token_mint"),
             "name": token_data.get("name"),
             "symbol": token_data.get("symbol"),
-            "risk_score": result.get("risk_score", 50),
-            "risk_level": result.get("risk_level", "MEDIUM"),
-            "verdict": result.get("verdict", "Analysis complete."),
-            "top_risk_factors": result.get("top_risk_factors", []),
-            "top_safe_signals": result.get("top_safe_signals", []),
+            "risk_score": normalized_score,
+            "risk_level": normalized_level,
+            "verdict": verdict,
+            "top_risk_factors": risk_factors,
+            "top_safe_signals": safe_signals,
             "creator_wallet": token_data.get("creator", {}).get("wallet"),
             "creator_username": token_data.get("creator", {}).get("username"),
             "top_10_concentration": token_data.get("holders", {}).get("top_10_concentration_pct", 0),
