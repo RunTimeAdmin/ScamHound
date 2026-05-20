@@ -1062,10 +1062,11 @@ def clear_all_scores():
     """Delete all scored tokens and score history. Returns count of deleted records."""
     conn = get_connection()
     c = conn.cursor()
-    c.execute("DELETE FROM scored_tokens")
-    scored_count = c.rowcount
+    # Delete dependent rows first to satisfy FK constraints.
     c.execute("DELETE FROM score_history")
     history_count = c.rowcount
+    c.execute("DELETE FROM scored_tokens")
+    scored_count = c.rowcount
     conn.commit()
     conn.close()
     return {"scored_deleted": scored_count, "history_deleted": history_count}
@@ -1129,11 +1130,21 @@ def clear_user_scans(user_id: int) -> dict:
     """Delete all scans for a specific user. Returns count."""
     conn = get_connection()
     c = conn.cursor()
+    c.execute(
+        """
+        DELETE FROM score_history
+        WHERE token_mint IN (
+            SELECT token_mint FROM scored_tokens WHERE user_id = ?
+        )
+        """,
+        (user_id,),
+    )
+    history_count = c.rowcount
     c.execute("DELETE FROM scored_tokens WHERE user_id = ?", (user_id,))
     scored_count = c.rowcount
     conn.commit()
     conn.close()
-    return {"scored_deleted": scored_count}
+    return {"scored_deleted": scored_count, "history_deleted": history_count}
 
 
 def get_scores_for_user(user_id: int, limit: int = 100, offset: int = 0) -> list:
