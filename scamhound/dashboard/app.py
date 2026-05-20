@@ -11,6 +11,7 @@ import csv
 import io
 import re
 import uuid
+from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -63,6 +64,8 @@ TIER_LIMITS = {
 
 # Auto-scan scheduler state
 _autoscan_scheduler: Optional[BackgroundScheduler] = None
+_daily_reset_scheduler: Optional[BackgroundScheduler] = None
+_rescore_scheduler: Optional[BackgroundScheduler] = None
 _autoscan_enabled: bool = False
 _autoscan_interval: int = 60  # seconds
 _autoscan_lock = threading.Lock()
@@ -231,11 +234,109 @@ def _add_rate_limit_headers(response: JSONResponse, key_row: dict) -> JSONRespon
     return response
 
 
+async def _startup_runtime() -> None:
+    """Initialize runtime dependencies and background schedulers."""
+    global _main_event_loop, _daily_reset_scheduler, _rescore_scheduler
+    import asyncio
+
+    _main_event_loop = asyncio.get_running_loop()
+    config_source = load_config()
+    logger.info(f"[SCAMHOUND] Config source: {config_source}")
+    database.init_db()
+    database.reset_daily_counters()
+    oauth_enabled = init_oauth()
+    logger.info(f"[SCAMHOUND] OAuth enabled: {oauth_enabled}")
+
+    # Schedule daily counter reset at midnight UTC
+    from apscheduler.triggers.cron import CronTrigger
+
+    _daily_reset_scheduler = BackgroundScheduler()
+    _daily_reset_scheduler.add_job(
+        database.reset_daily_counters,
+        trigger=CronTrigger(hour=0, minute=0),
+        id="api_key_daily_reset",
+        name="API Key Daily Counter Reset",
+        replace_existing=True,
+    )
+    _daily_reset_scheduler.start()
+    logger.info("[SCAMHOUND] Daily API key counter reset scheduled at UTC midnight")
+
+    # Add re-score job - runs every 24 hours
+    from engine.monitor import run_rescore_cycle
+
+    _rescore_scheduler = BackgroundScheduler()
+    _rescore_scheduler.add_job(
+        run_rescore_cycle,
+        trigger=IntervalTrigger(hours=24),
+        id="rescore_cycle",
+        name="ScamHound Re-Score Cycle",
+        replace_existing=True,
+    )
+    _rescore_scheduler.start()
+    logger.info("[SCAMHOUND] Re-score scheduler started (interval: 24h)")
+
+    # Register WebSocket broadcast callback with monitor
+    # This allows monitor to broadcast new scores without circular imports
+    try:
+        from engine import monitor
+
+        def broadcast_callback(score_data: dict):
+            """Callback to broadcast score via WebSocket from any thread."""
+            if _main_event_loop is None:
+                logger.debug("[WEBSOCKET] Main event loop unavailable, skipping")
+                return
+
+            asyncio.run_coroutine_threadsafe(
+                broadcast_new_score(score_data), _main_event_loop
+            )
+
+        monitor.set_new_score_callback(broadcast_callback)
+        logger.info("[SCAMHOUND] WebSocket callback registered with monitor")
+    except Exception as e:
+        logger.warning(f"[SCAMHOUND] Could not register monitor callback: {e}")
+
+    if not _AUTO_SCAN_ALLOWED:
+        logger.info("[MONITOR] Auto-scanning disabled (AUTO_SCAN_ENABLED != true)")
+
+    logger.info("[SCAMHOUND] Dashboard started")
+
+
+async def _shutdown_runtime() -> None:
+    """Shutdown background schedulers cleanly."""
+    global _autoscan_scheduler, _daily_reset_scheduler, _rescore_scheduler
+
+    for scheduler_name in (
+        "_autoscan_scheduler",
+        "_daily_reset_scheduler",
+        "_rescore_scheduler",
+    ):
+        scheduler = globals().get(scheduler_name)
+        if scheduler is None:
+            continue
+        try:
+            scheduler.shutdown(wait=False)
+            logger.info(f"[SCAMHOUND] Stopped {scheduler_name}")
+        except Exception as e:
+            logger.warning(f"[SCAMHOUND] Failed stopping {scheduler_name}: {e}")
+        globals()[scheduler_name] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan hook for startup/shutdown lifecycle."""
+    await _startup_runtime()
+    try:
+        yield
+    finally:
+        await _shutdown_runtime()
+
+
 # Create FastAPI app
 app = FastAPI(
     title="ScamHound",
     description="On-demand rug pull detection for Solana",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 
@@ -1864,71 +1965,6 @@ async def clear_scores(request: Request):
         result = database.clear_user_scans(user['id'])
         logger.info(f"[SCAMHOUND] Cleared user scans for {user['email']}: {result}")
     return JSONResponse(content={"status": "cleared", **result})
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database and config on startup."""
-    global _main_event_loop
-    import asyncio
-
-    _main_event_loop = asyncio.get_running_loop()
-    config_source = load_config()
-    logger.info(f"[SCAMHOUND] Config source: {config_source}")
-    database.init_db()
-    database.reset_daily_counters()
-    oauth_enabled = init_oauth()
-    logger.info(f"[SCAMHOUND] OAuth enabled: {oauth_enabled}")
-
-    # Schedule daily counter reset at midnight UTC
-    from apscheduler.triggers.cron import CronTrigger
-    _daily_reset_scheduler = BackgroundScheduler()
-    _daily_reset_scheduler.add_job(
-        database.reset_daily_counters,
-        trigger=CronTrigger(hour=0, minute=0),
-        id="api_key_daily_reset",
-        name="API Key Daily Counter Reset",
-        replace_existing=True
-    )
-    _daily_reset_scheduler.start()
-    logger.info("[SCAMHOUND] Daily API key counter reset scheduled at UTC midnight")
-
-    # Add re-score job - runs every 24 hours
-    from engine.monitor import run_rescore_cycle
-    _rescore_scheduler = BackgroundScheduler()
-    _rescore_scheduler.add_job(
-        run_rescore_cycle,
-        trigger=IntervalTrigger(hours=24),
-        id='rescore_cycle',
-        name='ScamHound Re-Score Cycle',
-        replace_existing=True
-    )
-    _rescore_scheduler.start()
-    logger.info("[SCAMHOUND] Re-score scheduler started (interval: 24h)")
-    
-    # Register WebSocket broadcast callback with monitor
-    # This allows monitor to broadcast new scores without circular imports
-    try:
-        from engine import monitor
-        def broadcast_callback(score_data: dict):
-            """Callback to broadcast score via WebSocket from any thread."""
-            if _main_event_loop is None:
-                logger.debug("[WEBSOCKET] Main event loop unavailable, skipping")
-                return
-
-            asyncio.run_coroutine_threadsafe(
-                broadcast_new_score(score_data), _main_event_loop
-            )
-        
-        monitor.set_new_score_callback(broadcast_callback)
-        logger.info("[SCAMHOUND] WebSocket callback registered with monitor")
-    except Exception as e:
-        logger.warning(f"[SCAMHOUND] Could not register monitor callback: {e}")
-    
-    if not _AUTO_SCAN_ALLOWED:
-        logger.info("[MONITOR] Auto-scanning disabled (AUTO_SCAN_ENABLED != true)")
-
-    logger.info("[SCAMHOUND] Dashboard started")
 
 
 @app.websocket("/ws/scores")
