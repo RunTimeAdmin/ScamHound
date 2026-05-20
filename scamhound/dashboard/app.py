@@ -43,6 +43,11 @@ from dashboard.routers.alerts import create_alerts_router
 from dashboard.routers.keys import create_keys_router
 from dashboard.routers.scores import create_scores_router
 from dashboard.routers.score_detail import create_score_detail_router
+from dashboard.routers.operational import create_operational_router
+from dashboard.routers.watchlist import create_watchlist_router
+from dashboard.routers.creator import create_creator_router
+from dashboard.routers.scan import create_scan_router
+from dashboard.routers.admin_ops import create_admin_ops_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -425,6 +430,7 @@ app.include_router(
         lambda response, key_row: _add_rate_limit_headers(response, key_row),
     )
 )
+app.include_router(create_operational_router())
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -480,7 +486,7 @@ async def leaderboard_page(request: Request):
     return templates.TemplateResponse("leaderboard.html", {"request": request, "leaderboard": leaderboard, "stats": stats})
 
 
-@app.get("/api/leaderboard")
+@app.get("/api/_legacy/leaderboard")
 async def api_leaderboard(request: Request, sort_by: str = "avg_risk", order: str = "desc", limit: int = 50, min_tokens: int = 2):
     """Get creator reputation leaderboard."""
     valid_sorts = ["avg_risk", "total_tokens", "high_risk_count", "last_active"]
@@ -701,7 +707,7 @@ async def api_score_history(request: Request, token_mint: str):
     return response
 
 
-@app.get("/api/rescore/status")
+@app.get("/api/_legacy/rescore/status")
 async def api_rescore_status(request: Request):
     """Get info about the re-scoring system."""
     eligible = database.get_tokens_for_rescore(max_age_days=7, min_score=40, limit=100)
@@ -713,7 +719,7 @@ async def api_rescore_status(request: Request):
     })
 
 
-@app.get("/api/stats")
+@app.get("/api/_legacy/stats")
 async def api_stats():
     """
     API endpoint for statistics.
@@ -722,7 +728,7 @@ async def api_stats():
     return JSONResponse(content=stats)
 
 
-@app.get("/api/watchlist")
+@app.get("/api/_legacy/watchlist")
 async def api_watchlist(request: Request):
     """
     API endpoint for watchlist.
@@ -739,7 +745,7 @@ async def api_watchlist(request: Request):
     return JSONResponse(content=watchlist)
 
 
-@app.post("/api/watchlist")
+@app.post("/api/_legacy/watchlist")
 async def api_add_to_watchlist(request: Request):
     """
     Add a wallet to the watchlist.
@@ -798,7 +804,7 @@ async def api_add_to_watchlist(request: Request):
         )
 
 
-@app.delete("/api/watchlist/{wallet_address}")
+@app.delete("/api/_legacy/watchlist/{wallet_address}")
 async def api_remove_from_watchlist(request: Request, wallet_address: str):
     """
     Remove a wallet from the watchlist.
@@ -837,7 +843,7 @@ async def api_remove_from_watchlist(request: Request, wallet_address: str):
         )
 
 
-@app.get("/api/user/watchlist")
+@app.get("/api/_legacy/user/watchlist")
 async def api_user_watchlist(request: Request):
     """Get the authenticated user's personal watchlist. Requires Pro+ API key."""
     key_row, key_error = _check_api_key(request)
@@ -854,7 +860,7 @@ async def api_user_watchlist(request: Request):
     return _add_rate_limit_headers(response, key_row)
 
 
-@app.post("/api/user/watchlist")
+@app.post("/api/_legacy/user/watchlist")
 async def api_user_watchlist_add(request: Request):
     """Add a wallet to personal watchlist. Requires Pro+ API key."""
     key_row, key_error = _check_api_key(request)
@@ -889,7 +895,7 @@ async def api_user_watchlist_add(request: Request):
     return JSONResponse(content={"success": True, "wallet_address": wallet_address})
 
 
-@app.delete("/api/user/watchlist/{wallet_address}")
+@app.delete("/api/_legacy/user/watchlist/{wallet_address}")
 async def api_user_watchlist_remove(request: Request, wallet_address: str):
     """Remove a wallet from personal watchlist. Requires Pro+ API key."""
     key_row, key_error = _check_api_key(request)
@@ -911,7 +917,7 @@ async def api_user_watchlist_remove(request: Request, wallet_address: str):
     return JSONResponse(content={"success": True})
 
 
-@app.get("/api/creator/{wallet_address}")
+@app.get("/api/_legacy/creator/{wallet_address}")
 async def api_creator_reputation(request: Request, wallet_address: str):
     """
     Get aggregated reputation data for a creator wallet.
@@ -950,7 +956,7 @@ async def api_creator_reputation(request: Request, wallet_address: str):
         )
 
 
-@app.post("/api/scan")
+@app.post("/api/_legacy/scan")
 async def scan_token(request: Request):
     """
     Manually trigger a scan for a specific token mint address.
@@ -1080,7 +1086,7 @@ async def scan_token(request: Request):
         )
 
 
-@app.post("/api/scan/batch")
+@app.post("/api/_legacy/scan/batch")
 async def api_scan_batch(request: Request):
     """Batch scan up to 50 token mints. Requires Builder tier or higher API key.
     
@@ -1180,7 +1186,7 @@ async def api_scan_batch(request: Request):
     return response
 
 
-@app.get("/api/platforms")
+@app.get("/api/_legacy/platforms")
 async def api_platforms():
     """Get status of registered token feed platforms."""
     from clients import platform_router
@@ -1215,7 +1221,7 @@ async def settings_page(request: Request):
     )
 
 
-@app.post("/api/settings")
+@app.post("/api/_legacy/settings")
 async def api_settings(request: Request):
     """
     API endpoint to save settings.
@@ -1271,7 +1277,7 @@ def _run_autoscan_cycle():
         logger.error(f"[AUTOSCAN] Error in scheduled cycle: {e}")
 
 
-@app.get("/api/autoscan/status")
+@app.get("/api/_legacy/autoscan/status")
 async def autoscan_status():
     """
     Get auto-scan status.
@@ -1284,7 +1290,7 @@ async def autoscan_status():
     })
 
 
-@app.post("/api/autoscan/toggle")
+@app.post("/api/_legacy/autoscan/toggle")
 async def autoscan_toggle(request: Request):
     """
     Toggle auto-scan on/off.
@@ -1368,7 +1374,7 @@ async def autoscan_toggle(request: Request):
     })
 
 
-@app.get("/api/export/csv")
+@app.get("/api/_legacy/export/csv")
 async def export_csv(request: Request):
     """
     Export all scored tokens as CSV.
@@ -1450,7 +1456,7 @@ async def export_csv(request: Request):
         )
 
 
-@app.get("/api/export/pdf")
+@app.get("/api/_legacy/export/pdf")
 async def export_pdf(request: Request):
     """
     Export all scored tokens as PDF.
@@ -1813,6 +1819,39 @@ async def clear_scores(request: Request):
             },
             status_code=500,
         )
+
+
+app.include_router(
+    create_creator_router(
+        api_leaderboard_fn=api_leaderboard,
+        api_creator_reputation_fn=api_creator_reputation,
+    )
+)
+app.include_router(
+    create_watchlist_router(
+        api_watchlist_fn=api_watchlist,
+        api_add_to_watchlist_fn=api_add_to_watchlist,
+        api_remove_from_watchlist_fn=api_remove_from_watchlist,
+        api_user_watchlist_fn=api_user_watchlist,
+        api_user_watchlist_add_fn=api_user_watchlist_add,
+        api_user_watchlist_remove_fn=api_user_watchlist_remove,
+    )
+)
+app.include_router(
+    create_scan_router(
+        scan_token_fn=scan_token,
+        api_scan_batch_fn=api_scan_batch,
+    )
+)
+app.include_router(
+    create_admin_ops_router(
+        api_save_settings_fn=api_settings,
+        api_autoscan_status_fn=autoscan_status,
+        api_toggle_autoscan_fn=autoscan_toggle,
+        export_csv_fn=export_csv,
+        export_pdf_fn=export_pdf,
+    )
+)
 
 
 @app.websocket("/ws/scores")
