@@ -11,6 +11,7 @@ import csv
 import io
 import re
 import uuid
+import json
 from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
 from datetime import datetime
@@ -76,6 +77,12 @@ _websocket_connections: set = set()
 _websocket_lock = threading.Lock()
 _main_event_loop = None
 _background_scan_tasks: set = set()
+
+
+def _structured_log(event: str, **fields) -> None:
+    """Emit structured JSON logs for easier filtering and correlation."""
+    payload = {"event": event, "component": "dashboard.app", **fields}
+    logger.info(json.dumps(payload, separators=(",", ":"), default=str))
 
 
 def _cleanup_rate_limit_store():
@@ -343,9 +350,35 @@ app = FastAPI(
 @app.middleware("http")
 async def attach_request_id(request: Request, call_next):
     """Attach a per-request ID for log and client correlation."""
+    started_at = time.perf_counter()
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
-    response = await call_next(request)
+    client_ip = _get_client_ip(request)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        _structured_log(
+            "http_request_error",
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            client_ip=client_ip,
+            duration_ms=duration_ms,
+            error=str(exc),
+        )
+        raise
+
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    _structured_log(
+        "http_request_complete",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        client_ip=client_ip,
+        duration_ms=duration_ms,
+    )
     response.headers["X-Request-ID"] = request_id
     return response
 
