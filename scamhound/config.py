@@ -54,13 +54,16 @@ def _mask_value(value: str) -> str:
     return "••••••" + value[-4:]
 
 
-def load_config() -> None:
+def load_config() -> str:
     """
     Load configuration from config.json (if exists) and merge into os.environ.
     Priority: config.json > .env > defaults
 
     Called at application startup to ensure all config is available via
     os.environ.
+
+    Returns:
+        str: Source used for config overrides ("config.json" or "env/defaults")
     """
     # First, apply defaults for any missing keys
     for key, default_value in DEFAULTS.items():
@@ -79,12 +82,13 @@ def load_config() -> None:
                     os.environ[key] = str(config_data[key])
             
             logger.info(f"[CONFIG] Loaded configuration from {CONFIG_PATH}")
+            return "config.json"
         except json.JSONDecodeError as e:
             logger.error(f"[CONFIG] Failed to parse config.json: {e}")
         except Exception as e:
             logger.error(f"[CONFIG] Error loading config: {e}")
-    else:
-        logger.info("[CONFIG] No config.json found, using env/defaults")
+    logger.info("[CONFIG] No config.json found, using env/defaults")
+    return "env/defaults"
 
 
 def _validate_api_key(key: str, value: str) -> tuple[bool, str]:
@@ -257,6 +261,3 @@ def get_config(key: str, default=None) -> str:
     """
     return os.environ.get(key, default)
 
-
-# Initialize config on module import
-load_config()

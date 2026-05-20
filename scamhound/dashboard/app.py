@@ -1868,7 +1868,8 @@ async def startup_event():
     import asyncio
 
     _main_event_loop = asyncio.get_running_loop()
-    load_config()
+    config_source = load_config()
+    logger.info(f"[SCAMHOUND] Config source: {config_source}")
     database.init_db()
     database.reset_daily_counters()
     init_oauth()

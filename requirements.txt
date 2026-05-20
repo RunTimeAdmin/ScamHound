@@ -1,5 +1,9 @@
 # HTTP client for external API calls
-requests==2.31.0
+requests==2.32.3
+# Keep requests dependency chain in a supported range
+urllib3==2.2.3
+charset_normalizer==3.3.2
+chardet==5.2.0
 # Anthropic Claude AI SDK
 anthropic>=0.51.0
 # OpenAI-compatible SDK (used for DeepSeek API)

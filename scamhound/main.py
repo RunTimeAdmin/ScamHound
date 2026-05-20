@@ -36,8 +36,8 @@ def main():
     # 2. Load config (wrapped in try/except for compatibility)
     try:
         from config import load_config
-        load_config()
-        logger.info("[SCAMHOUND] Config loaded from config.json")
+        config_source = load_config()
+        logger.info(f"[SCAMHOUND] Config source: {config_source}")
     except ImportError:
         logger.warning(
             "[SCAMHOUND] config.py not found, skipping config.json load"
