@@ -143,7 +143,12 @@ def get_token_overview(token_mint: str) -> Optional[Dict[str, Any]]:
             or data.get("marketcap", 0)
             or data.get("fdv", 0)
         ),
-        "liquidity": data.get("liquidity", 0) or data.get("liquidityUsd", 0),
+        # Prefer explicit USD liquidity fields when available.
+        "liquidity": (
+            data.get("liquidityUsd", 0)
+            or data.get("liquidity_usd", 0)
+            or data.get("liquidity", 0)
+        ),
         "volume_24h": data.get("volume24h", 0) or data.get("volume", 0),
         "price_change_24h": data.get("priceChange24h", 0) or data.get("price_change_24h", 0),
         "name": data.get("name"),
@@ -205,7 +210,11 @@ def get_liquidity_data(token_mint: str, overview_data: Optional[Dict[str, Any]] 
     # Extract liquidity and market cap from either:
     # 1) raw Birdeye payload keys (marketCap/mc/fdv), or
     # 2) normalized overview dict keys returned by get_token_overview (marketcap).
-    raw_liquidity = data.get("liquidity", 0)
+    raw_liquidity = (
+        data.get("liquidityUsd", 0)
+        or data.get("liquidity_usd", 0)
+        or data.get("liquidity", 0)
+    )
     raw_marketcap = (
         data.get("marketCap", 0)
         or data.get("marketcap", 0)
