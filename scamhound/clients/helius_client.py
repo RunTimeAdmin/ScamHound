@@ -8,7 +8,6 @@ import requests
 from typing import Optional, Dict, List, Any
 import logging
 from datetime import datetime, timezone
-from collections import Counter
 
 from .retry import request_with_retry
 
@@ -69,13 +68,21 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
         return None
 
 
-def get_wallet_transaction_history(wallet_address: str, limit: int = 50) -> List[Dict[str, Any]]:
+def get_wallet_transaction_history(
+    wallet_address: str,
+    limit: int = 50,
+    before: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
     Get recent transactions for a wallet.
     
     Returns list of transaction objects with type, timestamp, and token info.
     """
-    result = _make_request(f"/addresses/{wallet_address}/transactions", params={"limit": limit})
+    params: Dict[str, Any] = {"limit": max(1, min(limit, 100))}
+    if before:
+        params["before"] = before
+
+    result = _make_request(f"/addresses/{wallet_address}/transactions", params=params)
     
     if result is None or not isinstance(result, list):
         return []
@@ -83,7 +90,7 @@ def get_wallet_transaction_history(wallet_address: str, limit: int = 50) -> List
     return result
 
 
-def get_wallet_age_days(wallet_address: str) -> int:
+def get_wallet_age_days(wallet_address: str, max_pages: int = 5) -> int:
     """
     Get the age of a wallet in days since first transaction.
     
@@ -91,21 +98,32 @@ def get_wallet_age_days(wallet_address: str) -> int:
     - Age in days (0 if unknown, -1 if error)
     - HIGH RISK if creator wallet is less than 7 days old
     """
-    # Get a larger sample to find the oldest transaction
-    result = _make_request(f"/addresses/{wallet_address}/transactions", params={"limit": 100})
-    
-    if result is None or not isinstance(result, list) or len(result) == 0:
-        return -1  # Unknown
-    
-    # Find the oldest transaction
-    oldest_timestamp = None
-    for tx in result:
-        timestamp = tx.get("timestamp")
-        if timestamp:
-            tx_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-            if oldest_timestamp is None or tx_time < oldest_timestamp:
-                oldest_timestamp = tx_time
-    
+    # Paginate through history using "before" cursor to reduce age underestimation.
+    oldest_timestamp: Optional[datetime] = None
+    before: Optional[str] = None
+
+    for _ in range(max_pages):
+        transactions = get_wallet_transaction_history(
+            wallet_address, limit=100, before=before
+        )
+        if not transactions:
+            break
+
+        for tx in transactions:
+            timestamp = tx.get("timestamp")
+            if timestamp:
+                tx_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                if oldest_timestamp is None or tx_time < oldest_timestamp:
+                    oldest_timestamp = tx_time
+
+        if len(transactions) < 100:
+            break
+
+        next_before = transactions[-1].get("signature")
+        if not next_before or next_before == before:
+            break
+        before = next_before
+
     if oldest_timestamp is None:
         return -1
     
@@ -125,56 +143,64 @@ def get_previous_token_launches(wallet_address: str) -> Dict[str, Any]:
     - abandoned_tokens: list of token mints where liquidity was removed
     - days_since_last_launch: int (None if first launch)
     """
-    transactions = get_wallet_transaction_history(wallet_address, limit=100)
-    
-    if not transactions:
-        return {
-            "prior_launch_count": 0,
-            "abandoned_tokens": [],
-            "days_since_last_launch": None
-        }
-    
-    # Track token creation events and subsequent activity
-    token_creations = []
-    token_activity = Counter()
-    
-    for tx in transactions:
-        # Look for token creation patterns (this is simplified)
-        # In reality, you'd parse the transaction instructions
-        tx_type = tx.get("type", "")
-        
-        # Check for token-related transactions
-        token_transfers = tx.get("tokenTransfers", [])
-        native_transfers = tx.get("nativeTransfers", [])
-        
-        # Simplified: look for large outgoing transfers that might indicate rug
-        for transfer in native_transfers:
-            from_address = transfer.get("fromUserAccount", "")
-            to_address = transfer.get("toUserAccount", "")
-            amount = transfer.get("amount", 0)
-            
-            if from_address == wallet_address and amount > 1000000000:  # > 1 SOL
-                token_activity["large_outgoing"] += 1
-        
-        # Track unique tokens interacted with
-        for t in token_transfers:
-            mint = t.get("mint", "")
-            if mint:
-                token_activity[mint] += 1
-    
-    # Estimate prior launches (simplified heuristic)
-    # In production, you'd use DAS API to get asset creations
-    prior_launch_count = max(0, len([t for t in token_activity.keys() if t not in ["large_outgoing"]]) - 1)
-    
-    # Check for abandonment patterns (large outgoing transfers)
-    abandoned = []
-    if token_activity.get("large_outgoing", 0) > 2:
-        abandoned.append("potential_rug_pattern")
-    
+    created_mints = set()
+    latest_launch_timestamp: Optional[int] = None
+    before: Optional[str] = None
+
+    for _ in range(3):
+        transactions = get_wallet_transaction_history(
+            wallet_address, limit=100, before=before
+        )
+        if not transactions:
+            break
+
+        for tx in transactions:
+            tx_type = str(tx.get("type", "")).upper()
+            if not (
+                "CREATE" in tx_type
+                or "INITIALIZE_MINT" in tx_type
+                or tx_type in {"MINT_TO", "CREATE_TOKEN", "CREATE_MINT"}
+            ):
+                continue
+
+            fee_payer = (
+                tx.get("feePayer")
+                or tx.get("feePayerAccount")
+                or tx.get("source")
+                or ""
+            )
+            if fee_payer and fee_payer != wallet_address:
+                continue
+
+            for transfer in tx.get("tokenTransfers", []):
+                mint = transfer.get("mint", "")
+                if mint:
+                    created_mints.add(mint)
+
+            timestamp = tx.get("timestamp")
+            if isinstance(timestamp, int):
+                if latest_launch_timestamp is None or timestamp > latest_launch_timestamp:
+                    latest_launch_timestamp = timestamp
+
+        if len(transactions) < 100:
+            break
+        next_before = transactions[-1].get("signature")
+        if not next_before or next_before == before:
+            break
+        before = next_before
+
+    days_since_last_launch: Optional[int] = None
+    if latest_launch_timestamp is not None:
+        launch_dt = datetime.fromtimestamp(latest_launch_timestamp, tz=timezone.utc)
+        days_since_last_launch = max(0, (datetime.now(timezone.utc) - launch_dt).days)
+
+    # We avoid inferring abandoned launches from transfer activity only.
+    abandoned_tokens: List[str] = []
+
     return {
-        "prior_launch_count": prior_launch_count,
-        "abandoned_tokens": abandoned,
-        "days_since_last_launch": None  # Would need more detailed analysis
+        "prior_launch_count": max(0, len(created_mints) - 1),
+        "abandoned_tokens": abandoned_tokens,
+        "days_since_last_launch": days_since_last_launch,
     }
 
 
@@ -247,7 +273,8 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
     Returns:
         dict with keys:
             - 'top_holders': list of {address, balance, percentage}
-            - 'total_holders': estimated total holder count
+            - 'total_holders': exact count when known, otherwise None
+            - 'sampled_holder_count': number of top accounts returned by RPC
             - 'concentration_score': str ('critical', 'high', 'moderate', 'low')
             - 'top1_pct': float - top holder percentage
             - 'top5_pct': float - top 5 holders combined percentage
@@ -368,9 +395,9 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
         else:
             concentration_score = "low"
         
-        # Estimate total holders (this is an approximation)
-        # In reality, we'd need to query all token accounts, which is expensive
-        total_holders = len(accounts) if len(accounts) < limit else limit * 2
+        # Only report total holders when we can infer it accurately.
+        sampled_holder_count = len(accounts)
+        total_holders = sampled_holder_count if sampled_holder_count < limit else None
         
         logger.info(f"[HELIUS] Holder analysis for {token_mint[:8]}...: "
                    f"top1={top1_pct:.1f}%, top5={top5_pct:.1f}%, top10={top10_pct:.1f}%, "
@@ -380,6 +407,7 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
         return {
             "top_holders": top_holders,
             "total_holders": total_holders,
+            "sampled_holder_count": sampled_holder_count,
             "concentration_score": concentration_score,
             "top1_pct": round(top1_pct, 2),
             "top5_pct": round(top5_pct, 2),

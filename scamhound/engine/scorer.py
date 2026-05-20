@@ -287,6 +287,11 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
         age_str = "Unknown"
     
     # Pre-compute warning strings (Python 3.10 doesn't allow complex expressions in f-strings)
+    holder_count_text = (
+        str(total_holders)
+        if total_holders is not None
+        else "Unknown (top-holder sample only)"
+    )
     new_wallet_warning = "(NEW WALLET - HIGH RISK)" if 0 <= wallet_age < 7 else ""
     abandoned_count = len(abandoned)
     abandoned_warning = "(RUG HISTORY DETECTED)" if abandoned else ""
@@ -335,7 +340,7 @@ BAGS.FM DATA:
 - Creator royalty: {royalty_pct}%
 - Top holder concentration: {top1_pct}% (top 1), {top5_pct}% (top 5), {top_10_concentration}% (top 10)
 - Concentration risk level: {concentration_score}
-- Total holders (estimate): {total_holders}
+- Total holders: {holder_count_text}
 - Lifetime trading fees collected: {lifetime_fees} SOL
 - Top holders: {json.dumps(top_holders[:5])}{pumpfun_note}
 

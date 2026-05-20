@@ -200,7 +200,7 @@ async def _async_get_holder_data(token_mint: str) -> Optional[Dict[str, Any]]:
             return {
                 "top_holders": holder_data.get("top_holders", []),
                 "top_10_concentration_pct": holder_data.get("top10_pct", 0),
-                "total_holder_count": holder_data.get("total_holders", 0),
+                "total_holder_count": holder_data.get("total_holders"),
                 "concentration_score": holder_data.get(
                     "concentration_score", "unknown"
                 ),
