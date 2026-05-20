@@ -5,6 +5,7 @@ Token holder clustering and decentralization analysis using the new beta API.
 
 import logging
 import requests
+import threading
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
 
@@ -27,34 +28,38 @@ SUPPORTED_CHAINS = [
 _daily_request_count = 0
 _daily_quota_exhausted = False
 _quota_reset_date = None
+_quota_lock = threading.Lock()
 
 
 def _check_quota():
     """Check if daily quota is exhausted. Resets at UTC midnight."""
     global _daily_quota_exhausted, _quota_reset_date, _daily_request_count
-    today = datetime.now(timezone.utc).date()
-    if _quota_reset_date != today:
-        _daily_quota_exhausted = False
-        _daily_request_count = 0
-        _quota_reset_date = today
-    return not _daily_quota_exhausted
+    with _quota_lock:
+        today = datetime.now(timezone.utc).date()
+        if _quota_reset_date != today:
+            _daily_quota_exhausted = False
+            _daily_request_count = 0
+            _quota_reset_date = today
+        return not _daily_quota_exhausted
 
 
 def _handle_429():
     """Mark quota as exhausted for the day."""
     global _daily_quota_exhausted
-    _daily_quota_exhausted = True
+    with _quota_lock:
+        _daily_quota_exhausted = True
     logger.warning("BubbleMaps daily quota exhausted. Pausing until UTC midnight.")
 
 
 def get_quota_status():
     """Return quota status for health endpoint."""
     _check_quota()
-    return {
-        "requests_today": _daily_request_count,
-        "quota_exhausted": _daily_quota_exhausted,
-        "reset_date": str(_quota_reset_date) if _quota_reset_date else None
-    }
+    with _quota_lock:
+        return {
+            "requests_today": _daily_request_count,
+            "quota_exhausted": _daily_quota_exhausted,
+            "reset_date": str(_quota_reset_date) if _quota_reset_date else None
+        }
 
 
 def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
@@ -86,7 +91,8 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
             return None
 
         if response and response.status_code == 200:
-            _daily_request_count += 1
+            with _quota_lock:
+                _daily_request_count += 1
             return response.json()
 
         if response:

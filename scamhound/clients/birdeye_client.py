@@ -21,6 +21,7 @@ BASE_URL = "https://public-api.birdeye.so"
 # Rate limiting: track last request time
 _last_request_time = 0
 _MIN_DELAY_SECONDS = 0.5  # Minimum delay between requests
+_rate_limit_lock = threading.Lock()
 
 # TTL response cache: {(endpoint, token_mint): (response_dict, timestamp)}
 _response_cache: Dict[Tuple[str, str], Tuple[Any, float]] = {}
@@ -56,6 +57,16 @@ def _store_cache(endpoint: str, params: Optional[Dict], response_data: Dict) -> 
         _response_cache[key] = (response_data, time.time())
 
 
+def _enforce_rate_limit() -> None:
+    """Serialize request pacing to respect minimum delay globally."""
+    global _last_request_time
+    with _rate_limit_lock:
+        elapsed = time.time() - _last_request_time
+        if elapsed < _MIN_DELAY_SECONDS:
+            time.sleep(_MIN_DELAY_SECONDS - elapsed)
+        _last_request_time = time.time()
+
+
 def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
     """
     Make an authenticated request to the Birdeye API.
@@ -65,8 +76,6 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
     - Rate limiting (0.5s delay between requests)
     - Retry logic with exponential backoff for 429 errors
     """
-    global _last_request_time
-    
     # Check cache first
     cached = _check_cache(endpoint, params)
     if cached is not None:
@@ -84,13 +93,10 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
         "x-chain": "solana"
     }
     
-    # Rate limiting: ensure minimum delay between requests
-    elapsed = time.time() - _last_request_time
-    if elapsed < _MIN_DELAY_SECONDS:
-        time.sleep(_MIN_DELAY_SECONDS - elapsed)
-    
+    # Rate limiting: ensure minimum delay between requests across threads
+    _enforce_rate_limit()
+
     try:
-        _last_request_time = time.time()
         response = request_with_retry(
             requests.get, url, headers=headers, params=params, timeout=30
         )
