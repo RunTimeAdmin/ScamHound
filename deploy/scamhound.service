@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=scamhound
 Group=scamhound
-WorkingDirectory=/opt/scamhound/scamhound
+WorkingDirectory=/opt/scamhound/scamhound/scamhound
 EnvironmentFile=/opt/scamhound/.env
 ExecStart=/opt/scamhound/venv/bin/python main.py
 Restart=always
@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/scamhound/scamhound
+ReadWritePaths=/opt/scamhound/scamhound/scamhound
 
 [Install]
 WantedBy=multi-user.target

@@ -224,7 +224,7 @@ cat /opt/scamhound/logs/scamhound-error.log
 sudo -u scamhound /opt/scamhound/venv/bin/python --version
 
 # Test configuration
-sudo -u scamhound bash -c "cd /opt/scamhound/scamhound && source /opt/scamhound/venv/bin/activate && python -c 'from dashboard.app import app; print(\"OK\")'"
+sudo -u scamhound bash -c "cd /opt/scamhound/scamhound/scamhound && source /opt/scamhound/venv/bin/activate && python -c 'from dashboard.app import app; print(\"OK\")'"
 ```
 
 ### Nginx Errors
