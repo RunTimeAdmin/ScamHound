@@ -13,21 +13,61 @@ logger = logging.getLogger(__name__)
 
 # --- OAuth Setup ---
 oauth = OAuth()
+_oauth_initialized = False
+_oauth_enabled = False
 
 
-def init_oauth():
-    """Initialize Google OAuth client. Call after env vars are loaded."""
+def init_oauth() -> bool:
+    """Initialize Google OAuth client. Call after env vars are loaded.
+
+    Returns:
+        bool: True when Google OAuth is enabled and registered.
+
+    Raises:
+        RuntimeError: If OAuth variables are partially configured.
+    """
+    global _oauth_initialized, _oauth_enabled
+
+    if _oauth_initialized:
+        return _oauth_enabled
+
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+
+    if not client_id and not client_secret:
+        _oauth_initialized = True
+        _oauth_enabled = False
+        logger.info(
+            "[AUTH] Google OAuth disabled "
+            "(missing GOOGLE_CLIENT_ID/SECRET)"
+        )
+        return False
+
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "Google OAuth misconfigured: both GOOGLE_CLIENT_ID and "
+            "GOOGLE_CLIENT_SECRET must be set together."
+        )
+
     oauth.register(
-        name='google',
-        client_id=os.environ.get('GOOGLE_CLIENT_ID', ''),
-        client_secret=os.environ.get('GOOGLE_CLIENT_SECRET', ''),
+        name="google",
+        client_id=client_id,
+        client_secret=client_secret,
         server_metadata_url=(
-            'https://accounts.google.com/.well-known/openid-configuration'
+            "https://accounts.google.com/.well-known/openid-configuration"
         ),
         client_kwargs={
-            'scope': 'openid email profile'
-        }
+            "scope": "openid email profile"
+        },
     )
+    _oauth_initialized = True
+    _oauth_enabled = True
+    return True
+
+
+def is_oauth_enabled() -> bool:
+    """Return whether Google OAuth is configured and initialized."""
+    return _oauth_enabled
 
 
 # --- JWT Utilities ---
@@ -59,8 +99,11 @@ def create_jwt(user_id: int, email: str, is_admin: bool) -> str:
         "sub": str(user_id),
         "email": email,
         "is_admin": is_admin,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS),
-        "iat": datetime.now(timezone.utc)
+        "exp": (
+            datetime.now(timezone.utc)
+            + timedelta(hours=JWT_EXPIRATION_HOURS)
+        ),
+        "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, _get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
@@ -68,7 +111,11 @@ def create_jwt(user_id: int, email: str, is_admin: bool) -> str:
 def decode_jwt(token: str) -> dict:
     """Decode and validate a JWT token."""
     try:
-        payload = jwt.decode(token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(
+            token,
+            _get_jwt_secret(),
+            algorithms=[JWT_ALGORITHM],
+        )
         return payload
     except jwt.ExpiredSignatureError:
         logger.debug("JWT token expired")

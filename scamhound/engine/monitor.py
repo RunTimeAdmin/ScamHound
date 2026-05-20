@@ -6,7 +6,6 @@ Main polling loop that coordinates all analysis
 import os
 import logging
 import asyncio
-import concurrent.futures
 from collections import OrderedDict
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime, timezone
@@ -556,32 +555,23 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
 def scan_single_token(token_mint: str, skip_if_scored: bool = True) -> Optional[Dict[str, Any]]:
     """Scan a single token through the full pipeline.
     
-    Creates a new event loop if needed (for sync callers like APScheduler).
+    For synchronous callers (e.g., APScheduler), creates a local loop and runs
+    the async scanner directly. In async contexts, callers must use
+    scan_single_token_async().
     """
     try:
-        loop = asyncio.get_running_loop()
-        # Already in an async context — create a task
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(_run_scan_in_new_loop, token_mint, skip_if_scored)
-            return future.result(timeout=120)
+        asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop — create one (APScheduler thread context)
+        # No running loop (APScheduler thread context) — run locally
         loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
             return loop.run_until_complete(scan_single_token_async(token_mint, skip_if_scored))
         finally:
             loop.close()
-
-
-def _run_scan_in_new_loop(token_mint: str, skip_if_scored: bool) -> Optional[Dict[str, Any]]:
-    """Helper to run async scan in a fresh event loop (for thread pool execution)."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(scan_single_token_async(token_mint, skip_if_scored))
-    finally:
-        loop.close()
+    raise RuntimeError(
+        "scan_single_token() cannot be called from an active event loop; "
+        "use scan_single_token_async() instead."
+    )
 
 
 async def _run_cycle_async(tokens: list) -> None:

@@ -33,6 +33,7 @@ from config import get_masked_keys, save_config, load_config
 from auth import (
     oauth,
     init_oauth,
+    is_oauth_enabled,
     get_current_user,
     create_jwt,
     get_jwt_secret,
@@ -275,6 +276,8 @@ async def login_page(request: Request):
 @app.get("/auth/login/google")
 async def login_google(request: Request):
     """Redirect to Google OAuth consent screen."""
+    if not is_oauth_enabled():
+        return RedirectResponse(url="/login?error=oauth_unavailable", status_code=302)
     redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", request.url_for("auth_callback_google"))
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
@@ -282,6 +285,8 @@ async def login_google(request: Request):
 @app.get("/auth/callback/google")
 async def auth_callback_google(request: Request):
     """Handle Google OAuth callback."""
+    if not is_oauth_enabled():
+        return RedirectResponse(url="/login?error=oauth_unavailable", status_code=302)
     try:
         token = await oauth.google.authorize_access_token(request)
         user_info = token.get('userinfo')
@@ -1872,7 +1877,8 @@ async def startup_event():
     logger.info(f"[SCAMHOUND] Config source: {config_source}")
     database.init_db()
     database.reset_daily_counters()
-    init_oauth()
+    oauth_enabled = init_oauth()
+    logger.info(f"[SCAMHOUND] OAuth enabled: {oauth_enabled}")
 
     # Schedule daily counter reset at midnight UTC
     from apscheduler.triggers.cron import CronTrigger
