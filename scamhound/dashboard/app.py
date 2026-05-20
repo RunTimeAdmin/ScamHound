@@ -65,6 +65,8 @@ _AUTO_SCAN_ALLOWED = os.environ.get("AUTO_SCAN_ENABLED", "false").lower() == "tr
 # WebSocket active connections
 _websocket_connections: set = set()
 _websocket_lock = threading.Lock()
+_main_event_loop = None
+_background_scan_tasks: set = set()
 
 
 def _cleanup_rate_limit_store():
@@ -1027,8 +1029,10 @@ async def api_scan_batch(request: Request):
                     await monitor.scan_single_token_async(mint, skip_if_scored=False)
                 except Exception:
                     pass
-        
-        asyncio.create_task(_background_scan(to_scan))
+
+        task = asyncio.create_task(_background_scan(to_scan))
+        _background_scan_tasks.add(task)
+        task.add_done_callback(_background_scan_tasks.discard)
     
     # 6. Return response
     response = JSONResponse(content={
@@ -1622,6 +1626,10 @@ async def clear_scores(request: Request):
 @app.on_event("startup")
 async def startup_event():
     """Initialize database and config on startup."""
+    global _main_event_loop
+    import asyncio
+
+    _main_event_loop = asyncio.get_running_loop()
     load_config()
     database.init_db()
     database.reset_daily_counters()
@@ -1657,19 +1665,15 @@ async def startup_event():
     # This allows monitor to broadcast new scores without circular imports
     try:
         from engine import monitor
-        import asyncio
-        
         def broadcast_callback(score_data: dict):
             """Callback to broadcast score via WebSocket from any thread."""
-            try:
-                # Use asyncio.run_coroutine_threadsafe if in different thread
-                loop = asyncio.get_running_loop()
-                asyncio.run_coroutine_threadsafe(
-                    broadcast_new_score(score_data), loop
-                )
-            except RuntimeError:
-                # No running loop, skip broadcast
-                logger.debug("[WEBSOCKET] No event loop, skipping broadcast")
+            if _main_event_loop is None:
+                logger.debug("[WEBSOCKET] Main event loop unavailable, skipping")
+                return
+
+            asyncio.run_coroutine_threadsafe(
+                broadcast_new_score(score_data), _main_event_loop
+            )
         
         monitor.set_new_score_callback(broadcast_callback)
         logger.info("[SCAMHOUND] WebSocket callback registered with monitor")
@@ -1719,7 +1723,10 @@ async def broadcast_new_score(score_data: dict):
     Args:
         score_data: Dictionary containing token score information
     """
-    if not _websocket_connections:
+    with _websocket_lock:
+        sockets_snapshot = list(_websocket_connections)
+
+    if not sockets_snapshot:
         return
     
     # Prepare the message
@@ -1731,7 +1738,7 @@ async def broadcast_new_score(score_data: dict):
     # Send to all connected clients
     disconnected = set()
     
-    for websocket in _websocket_connections:
+    for websocket in sockets_snapshot:
         try:
             await websocket.send_json(message)
         except Exception as e:
@@ -1741,7 +1748,7 @@ async def broadcast_new_score(score_data: dict):
     # Clean up disconnected clients
     if disconnected:
         with _websocket_lock:
-            _websocket_connections -= disconnected
+            _websocket_connections.difference_update(disconnected)
 
 
 if __name__ == "__main__":

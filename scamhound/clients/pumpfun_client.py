@@ -70,7 +70,11 @@ def get_recent_launches(limit: int = 25) -> List[Dict[str, Any]]:
 
 def is_configured() -> bool:
     """Check if pump.fun monitoring is enabled."""
-    return os.environ.get("PUMPFUN_ENABLED", "false").lower() == "true"
+    # Support both names during migration; PUMPFUN_ENABLED takes precedence.
+    value = os.environ.get("PUMPFUN_ENABLED")
+    if value is None:
+        value = os.environ.get("ENABLE_PUMPFUN", "false")
+    return str(value).lower() == "true"
 
 
 def get_token_profile(token_mint: str) -> Optional[Dict[str, Any]]:

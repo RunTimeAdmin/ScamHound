@@ -48,7 +48,7 @@ All configuration is via environment variables (`.env` file). See `.env.example`
 | `LLM_PROVIDER` | `anthropic` | AI provider: "anthropic" or "deepseek" |
 | `AUTO_SCAN_ENABLED` | `false` | Enable background auto-polling for new tokens |
 | `POLL_INTERVAL_SECONDS` | `60` | Seconds between auto-scan cycles |
-| `ENABLE_PUMPFUN` | `false` | Enable pump.fun token feed |
+| `PUMPFUN_ENABLED` | `false` | Enable pump.fun token feed (`ENABLE_PUMPFUN` also accepted) |
 | `RISK_ALERT_THRESHOLD` | `65` | Minimum risk score to trigger alerts |
 | `PORT` | `8000` | Dashboard server port |
 
