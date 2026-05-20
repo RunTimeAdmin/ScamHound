@@ -6,7 +6,7 @@ Posts formatted risk alerts to @ScamHoundCrypto
 import os
 import logging
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 import tweepy
 
@@ -75,7 +75,6 @@ def format_tweet(token: Dict[str, Any]) -> str:
     Returns a tweet text under 280 characters.
     """
     symbol = token.get("symbol", "???")
-    name = token.get("name", "Unknown")
     score = token.get("risk_score", 0)
     risk_level = token.get("risk_level", "HIGH")
     token_mint = token.get("token_mint", "")

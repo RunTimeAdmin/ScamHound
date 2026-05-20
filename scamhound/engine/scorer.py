@@ -7,7 +7,7 @@ Supports multiple providers: Anthropic Claude (default) and DeepSeek.
 import json
 import logging
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime, timezone
 
 import anthropic
