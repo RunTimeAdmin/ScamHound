@@ -601,7 +601,12 @@ def add_to_watchlist(wallet_address: str, label: str = "", notes: str = "") -> b
         cursor.execute("""
             INSERT INTO watchlist (wallet_address, label, notes, added_at)
             VALUES (?, ?, ?, ?)
-        """, (wallet_address, label, notes, datetime.now().isoformat()))
+        """, (
+            wallet_address,
+            label,
+            notes,
+            datetime.now(timezone.utc).isoformat(),
+        ))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -661,7 +666,7 @@ def update_watchlist_seen(wallet_address: str) -> bool:
         UPDATE watchlist
         SET last_seen_at = ?, alert_count = alert_count + 1
         WHERE wallet_address = ?
-    """, (datetime.now().isoformat(), wallet_address))
+    """, (datetime.now(timezone.utc).isoformat(), wallet_address))
     
     updated = cursor.rowcount > 0
     conn.commit()
@@ -683,7 +688,13 @@ def add_to_user_watchlist(key_id: int, wallet_address: str, label: str = "", not
         cursor.execute("""
             INSERT INTO user_watchlist (key_id, wallet_address, label, notes, added_at)
             VALUES (?, ?, ?, ?, ?)
-        """, (key_id, wallet_address, label, notes, datetime.now().isoformat()))
+        """, (
+            key_id,
+            wallet_address,
+            label,
+            notes,
+            datetime.now(timezone.utc).isoformat(),
+        ))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -743,7 +754,7 @@ def update_user_watchlist_seen(key_id: int, wallet_address: str):
         UPDATE user_watchlist
         SET last_seen_at = ?, alert_count = alert_count + 1
         WHERE key_id = ? AND wallet_address = ?
-    """, (datetime.now().isoformat(), key_id, wallet_address))
+    """, (datetime.now(timezone.utc).isoformat(), key_id, wallet_address))
     
     conn.commit()
     conn.close()
@@ -1061,7 +1072,7 @@ def create_or_update_user(google_id: str, email: str, name: str = None, picture_
     """Create a new user or update existing one on login. Returns user dict."""
     conn = get_connection()
     c = conn.cursor()
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     # Check if user exists
     c.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
