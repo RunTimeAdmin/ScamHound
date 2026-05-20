@@ -42,6 +42,7 @@ from dashboard.routers.health import create_health_router
 from dashboard.routers.alerts import create_alerts_router
 from dashboard.routers.keys import create_keys_router
 from dashboard.routers.scores import create_scores_router
+from dashboard.routers.score_detail import create_score_detail_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -418,6 +419,12 @@ app.include_router(
         logger,
     )
 )
+app.include_router(
+    create_score_detail_router(
+        lambda request: _check_api_key(request),
+        lambda response, key_row: _add_rate_limit_headers(response, key_row),
+    )
+)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -640,7 +647,7 @@ async def api_scores(
     return response
 
 
-@app.get("/api/score/{token_mint}")
+@app.get("/api/_legacy/score/{token_mint}")
 async def api_score(request: Request, token_mint: str):
     """
     API endpoint for a single token score.
@@ -666,7 +673,7 @@ async def api_score(request: Request, token_mint: str):
     return response
 
 
-@app.get("/api/score/{token_mint}/history")
+@app.get("/api/_legacy/score/{token_mint}/history")
 async def api_score_history(request: Request, token_mint: str):
     """Get score history for a token. Shows how risk score evolved over time."""
     key_row, key_error = _check_api_key(request)
