@@ -109,13 +109,28 @@ def _calculate_token_age_minutes(created_at: Any) -> Optional[int]:
         if isinstance(created_at, str):
             # Numeric strings from some APIs are unix timestamps.
             if created_at.isdigit():
-                created_dt = datetime.fromtimestamp(int(created_at), tz=timezone.utc)
+                raw_ts = int(created_at)
+                # Normalize epoch precision (seconds vs ms/us/ns).
+                if raw_ts > 10**18:  # nanoseconds
+                    raw_ts = raw_ts / 1_000_000_000
+                elif raw_ts > 10**15:  # microseconds
+                    raw_ts = raw_ts / 1_000_000
+                elif raw_ts > 10**12:  # milliseconds
+                    raw_ts = raw_ts / 1_000
+                created_dt = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
             else:
                 # Handle various ISO formats
                 created_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
         elif isinstance(created_at, (int, float)):
             # Unix timestamp in seconds
-            created_dt = datetime.fromtimestamp(created_at, tz=timezone.utc)
+            raw_ts = created_at
+            if raw_ts > 10**18:  # nanoseconds
+                raw_ts = raw_ts / 1_000_000_000
+            elif raw_ts > 10**15:  # microseconds
+                raw_ts = raw_ts / 1_000_000
+            elif raw_ts > 10**12:  # milliseconds
+                raw_ts = raw_ts / 1_000
+            created_dt = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
         elif isinstance(created_at, datetime):
             # Handle various ISO formats
             created_dt = created_at
@@ -347,7 +362,8 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             "token_mint": token_mint,
             "name": "Unknown",
             "symbol": "UNKNOWN",
-            "created_at": datetime.now(timezone.utc).isoformat()
+            # Keep unknown when source APIs don't provide launch time.
+            "created_at": None,
         }
         
         # Source profile by platform hint:
