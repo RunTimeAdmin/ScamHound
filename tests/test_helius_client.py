@@ -185,3 +185,47 @@ def test_creator_history_summary_uses_cache_between_calls():
 
     assert first["wallet_age_days"] == second["wallet_age_days"]
     assert mock_history.call_count == 1
+
+
+def test_check_wallet_clustering_detects_shared_funding_source():
+    """Wallets funded by same source should be counted as clustered."""
+
+    def _history(wallet: str, limit: int = 10, before=None):
+        source = "SourceShared" if wallet in {"w1", "w2"} else "SourceOther"
+        return [
+            {
+                "nativeTransfers": [
+                    {"toUserAccount": wallet, "fromUserAccount": source}
+                ]
+            }
+        ]
+
+    with patch.object(
+        helius_client,
+        "get_wallet_transaction_history",
+        side_effect=_history,
+    ):
+        result = helius_client.check_wallet_clustering(["w1", "w2", "w3"])
+
+    assert result["clustered_wallets"] == 2
+    assert result["clustering_score"] == 0.67
+
+
+def test_check_wallet_clustering_limits_analysis_to_top_ten_wallets():
+    """Clustering analysis should only query the first 10 holder wallets."""
+    wallets = [f"w{i}" for i in range(12)]
+
+    with patch.object(
+        helius_client,
+        "get_wallet_transaction_history",
+        return_value=[
+            {
+                "nativeTransfers": [
+                    {"toUserAccount": "placeholder", "fromUserAccount": "S1"}
+                ]
+            }
+        ],
+    ) as mock_history:
+        helius_client.check_wallet_clustering(wallets)
+
+    assert mock_history.call_count == 10

@@ -7,6 +7,7 @@ import os
 import requests
 from typing import Optional, Dict, List, Any
 import logging
+import concurrent.futures
 from datetime import datetime, timezone
 
 from .retry import request_with_retry
@@ -234,6 +235,22 @@ def get_previous_token_launches(wallet_address: str) -> Dict[str, Any]:
     return _derive_previous_token_launches(wallet_address, transactions)
 
 
+def _find_wallet_funding_source(wallet: str) -> Optional[str]:
+    """Return earliest observed incoming funding source for a wallet."""
+    transactions = get_wallet_transaction_history(wallet, limit=10)
+    if not transactions:
+        return None
+
+    for tx in reversed(transactions):
+        native_transfers = tx.get("nativeTransfers", [])
+        for transfer in native_transfers:
+            if transfer.get("toUserAccount") == wallet:
+                source = transfer.get("fromUserAccount", "")
+                if source:
+                    return source
+    return None
+
+
 def check_wallet_clustering(holder_wallets: List[str]) -> Dict[str, Any]:
     """
     Check if multiple holder wallets are connected (funded from same source).
@@ -250,25 +267,25 @@ def check_wallet_clustering(holder_wallets: List[str]) -> Dict[str, Any]:
         }
     
     # Track funding sources for each wallet
-    funding_sources = {}
-    
-    for wallet in holder_wallets[:10]:  # Limit to top 10
-        transactions = get_wallet_transaction_history(wallet, limit=10)
-        
-        if not transactions:
-            continue
-        
-        # Find the earliest incoming transfer (funding source)
-        for tx in reversed(transactions):
-            native_transfers = tx.get("nativeTransfers", [])
-            for transfer in native_transfers:
-                if transfer.get("toUserAccount") == wallet:
-                    source = transfer.get("fromUserAccount", "")
-                    if source:
-                        if source not in funding_sources:
-                            funding_sources[source] = []
-                        funding_sources[source].append(wallet)
-                        break
+    funding_sources: Dict[str, List[str]] = {}
+    analyzed_wallets = holder_wallets[:10]  # Limit to top 10
+
+    max_workers = min(8, len(analyzed_wallets))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_wallet = {
+            executor.submit(_find_wallet_funding_source, wallet): wallet
+            for wallet in analyzed_wallets
+        }
+        for future in concurrent.futures.as_completed(future_to_wallet):
+            wallet = future_to_wallet[future]
+            try:
+                source = future.result()
+            except Exception:
+                source = None
+            if source:
+                if source not in funding_sources:
+                    funding_sources[source] = []
+                funding_sources[source].append(wallet)
     
     # Find clusters (multiple wallets funded from same source)
     max_cluster = 0
@@ -280,7 +297,7 @@ def check_wallet_clustering(holder_wallets: List[str]) -> Dict[str, Any]:
             max_cluster = max(max_cluster, len(wallets))
     
     # Calculate clustering score
-    total_analyzed = len(holder_wallets[:10])
+    total_analyzed = len(analyzed_wallets)
     clustering_score = total_clustered / total_analyzed if total_analyzed > 0 else 0.0
     
     return {
