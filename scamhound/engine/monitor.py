@@ -18,6 +18,7 @@ from clients import bags_client
 from clients import helius_client
 from clients import birdeye_client
 from clients import bubblemaps_client
+from clients import pumpfun_client
 from clients import platform_router
 from engine import database
 from engine import scorer
@@ -107,9 +108,17 @@ def _calculate_token_age_minutes(created_at: Any) -> Optional[int]:
     try:
         # Parse the timestamp
         if isinstance(created_at, str):
-            # Handle various ISO formats
-            created_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            # Numeric strings from some APIs are unix timestamps.
+            if created_at.isdigit():
+                created_dt = datetime.fromtimestamp(int(created_at), tz=timezone.utc)
+            else:
+                # Handle various ISO formats
+                created_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+        elif isinstance(created_at, (int, float)):
+            # Unix timestamp in seconds
+            created_dt = datetime.fromtimestamp(created_at, tz=timezone.utc)
         elif isinstance(created_at, datetime):
+            # Handle various ISO formats
             created_dt = created_at
         else:
             return None
@@ -163,6 +172,20 @@ async def _async_get_bags_profile(token_mint: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(
             f"[SCAMHOUND] Could not get Bags profile for {token_mint[:8]}...: {e}"
+        )
+        return None
+
+
+async def _async_get_pumpfun_profile(token_mint: str) -> Optional[Dict[str, Any]]:
+    """Async wrapper for getting pump.fun token metadata."""
+    try:
+        return await asyncio.to_thread(
+            pumpfun_client.get_token_profile, token_mint
+        )
+    except Exception as e:
+        logger.warning(
+            f"[SCAMHOUND] Could not get pump.fun profile for "
+            f"{token_mint[:8]}...: {e}"
         )
         return None
 
@@ -328,18 +351,33 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             "created_at": datetime.utcnow().isoformat()
         }
         
-        # Get Bags profile (may fail if token not from Bags)
-        bags_profile = await _async_get_bags_profile(token_mint)
-        if bags_profile:
-            token_data.update(bags_profile)
-            # Try to get better name/symbol from Bags
-            if bags_profile.get("name"):
-                token_data["name"] = bags_profile["name"]
-            if bags_profile.get("symbol"):
-                token_data["symbol"] = bags_profile["symbol"]
-            # Try to get created_at from Bags if not already set
-            if bags_profile.get("created_at"):
-                token_data["created_at"] = bags_profile["created_at"]
+        # Source profile by platform hint:
+        # - pump mints: avoid Bags endpoints (they return 400 for many pump tokens)
+        # - non-pump: keep existing Bags enrichment
+        is_pump_mint = token_mint.lower().endswith("pump")
+        if is_pump_mint:
+            pump_profile = await _async_get_pumpfun_profile(token_mint)
+            if pump_profile:
+                token_data.update(pump_profile)
+                creator_wallet = pump_profile.get("creator_wallet")
+                if creator_wallet:
+                    token_data["creator"] = {
+                        "wallet": creator_wallet,
+                        "username": "pumpfun",
+                        "royalty_pct": 0.0,
+                    }
+        else:
+            bags_profile = await _async_get_bags_profile(token_mint)
+            if bags_profile:
+                token_data.update(bags_profile)
+                # Try to get better name/symbol from Bags
+                if bags_profile.get("name"):
+                    token_data["name"] = bags_profile["name"]
+                if bags_profile.get("symbol"):
+                    token_data["symbol"] = bags_profile["symbol"]
+                # Try to get created_at from Bags if not already set
+                if bags_profile.get("created_at"):
+                    token_data["created_at"] = bags_profile["created_at"]
         
         # Calculate token age
         token_data["token_age_minutes"] = _calculate_token_age_minutes(
@@ -398,6 +436,16 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                     if birdeye_symbol:
                         token_data["symbol"] = birdeye_symbol
 
+                # Fallback creator wallet for tokens where Bags profile is unavailable.
+                if not token_data.get("creator", {}).get("wallet"):
+                    creator_wallet = overview.get("creator_wallet")
+                    if creator_wallet:
+                        token_data["creator"] = {
+                            "wallet": creator_wallet,
+                            "username": "unknown",
+                            "royalty_pct": 0.0,
+                        }
+
                 # Prefer real holder count from market overview when available.
                 # Helius getTokenLargestAccounts only gives top holders, so earlier
                 # values can be rough estimates for newer scans.
@@ -419,6 +467,21 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                         existing_holders = token_data.get("holders") or {}
                         existing_holders["total_holder_count"] = normalized_holder_count
                         token_data["holders"] = existing_holders
+
+            # If Birdeye overview included market cap indirectly (as marketcap key)
+            # but liquidity ratio wasn't precomputed, derive it here.
+            if token_data.get("liquidity_to_mcap_ratio", 0) == 0:
+                try:
+                    liquidity_usd = float(token_data.get("liquidity_usd", 0) or 0)
+                    market_cap = float(
+                        overview.get("marketcap", 0) if overview else 0
+                    )
+                    if liquidity_usd > 0 and market_cap > 0:
+                        token_data["liquidity_to_mcap_ratio"] = round(
+                            liquidity_usd / market_cap, 4
+                        )
+                except (TypeError, ValueError):
+                    pass
         
         # Get creator wallet
         creator_wallet = token_data.get("creator", {}).get("wallet")

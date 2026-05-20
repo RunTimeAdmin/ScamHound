@@ -129,12 +129,33 @@ def get_token_overview(token_mint: str) -> Optional[Dict[str, Any]]:
     
     return {
         "price": data.get("price", 0),
-        "marketcap": data.get("mc", 0) or data.get("marketcap", 0),
-        "liquidity": data.get("liquidity", 0),
+        # Keep a normalized marketcap field but preserve additional variants.
+        "marketcap": (
+            data.get("marketCap", 0)
+            or data.get("market_cap", 0)
+            or data.get("mc", 0)
+            or data.get("marketcap", 0)
+            or data.get("fdv", 0)
+        ),
+        "liquidity": data.get("liquidity", 0) or data.get("liquidityUsd", 0),
         "volume_24h": data.get("volume24h", 0) or data.get("volume", 0),
         "price_change_24h": data.get("priceChange24h", 0) or data.get("price_change_24h", 0),
         "name": data.get("name"),
-        "symbol": data.get("symbol")
+        "symbol": data.get("symbol"),
+        # Preserve useful enrichment fields so monitor can use them directly.
+        "holderCount": (
+            data.get("holderCount")
+            or data.get("holder_count")
+            or data.get("holders")
+            or data.get("holdersCount")
+            or data.get("uniqueHolders")
+        ),
+        "creator_wallet": (
+            data.get("creatorAddress")
+            or data.get("creator_address")
+            or data.get("owner")
+            or data.get("deployer")
+        ),
     }
 
 

@@ -3,13 +3,29 @@
 import logging
 import os
 import requests
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from .retry import request_with_retry
 
 logger = logging.getLogger(__name__)
 
 PUMPPORTAL_BASE_URL = "https://pumpportal.fun/api/data"
+
+
+def _normalize_token(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize PumpPortal token payload into ScamHound shape."""
+    return {
+        "token_mint": item.get("mint", ""),
+        "name": item.get("name", "Unknown"),
+        "symbol": item.get("symbol", ""),
+        "creator_wallet": item.get("creator", item.get("deployer", "")),
+        "created_at": item.get("created_at", item.get("timestamp", "")),
+        "platform": "pumpfun",
+        # pump.fun specific fields
+        "initial_buy_sol": item.get("initial_buy", 0),
+        "market_cap": item.get("market_cap", 0),
+        "reply_count": item.get("reply_count", 0),
+    }
 
 
 def get_recent_launches(limit: int = 25) -> List[Dict[str, Any]]:
@@ -40,18 +56,7 @@ def get_recent_launches(limit: int = 25) -> List[Dict[str, Any]]:
         tokens = []
         
         for item in data[:limit]:
-            token = {
-                "token_mint": item.get("mint", ""),
-                "name": item.get("name", "Unknown"),
-                "symbol": item.get("symbol", ""),
-                "creator_wallet": item.get("creator", item.get("deployer", "")),
-                "created_at": item.get("created_at", item.get("timestamp", "")),
-                "platform": "pumpfun",
-                # pump.fun specific fields
-                "initial_buy_sol": item.get("initial_buy", 0),
-                "market_cap": item.get("market_cap", 0),
-                "reply_count": item.get("reply_count", 0),
-            }
+            token = _normalize_token(item)
             if token["token_mint"]:
                 tokens.append(token)
         
@@ -66,3 +71,11 @@ def get_recent_launches(limit: int = 25) -> List[Dict[str, Any]]:
 def is_configured() -> bool:
     """Check if pump.fun monitoring is enabled."""
     return os.environ.get("PUMPFUN_ENABLED", "false").lower() == "true"
+
+
+def get_token_profile(token_mint: str) -> Optional[Dict[str, Any]]:
+    """Fetch latest pump.fun feed and return a single normalized token match."""
+    for token in get_recent_launches(limit=200):
+        if token.get("token_mint") == token_mint:
+            return token
+    return None
