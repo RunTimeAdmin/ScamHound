@@ -43,6 +43,125 @@ EXCLUDED_HOLDER_ADDRESSES = {
     "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",  # Meteora DLMM
 }
 
+_CREATOR_HISTORY_CACHE: Dict[str, Dict[str, Any]] = {}
+_CREATOR_HISTORY_CACHE_TTL_SECONDS = int(
+    os.environ.get("HELIUS_CREATOR_CACHE_TTL_SECONDS", "600")
+)
+
+
+def _fetch_creator_transactions(
+    wallet_address: str,
+    max_pages: int,
+) -> List[Dict[str, Any]]:
+    """Fetch paginated creator transactions once for downstream analyses."""
+    collected: List[Dict[str, Any]] = []
+    before: Optional[str] = None
+
+    for _ in range(max_pages):
+        transactions = get_wallet_transaction_history(
+            wallet_address, limit=100, before=before
+        )
+        if not transactions:
+            break
+
+        collected.extend(transactions)
+        if len(transactions) < 100:
+            break
+
+        next_before = transactions[-1].get("signature")
+        if not next_before or next_before == before:
+            break
+        before = next_before
+
+    return collected
+
+
+def _derive_wallet_age_days(transactions: List[Dict[str, Any]]) -> int:
+    """Derive wallet age from fetched transactions."""
+    oldest_timestamp: Optional[datetime] = None
+    for tx in transactions:
+        timestamp = tx.get("timestamp")
+        if timestamp:
+            tx_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            if oldest_timestamp is None or tx_time < oldest_timestamp:
+                oldest_timestamp = tx_time
+
+    if oldest_timestamp is None:
+        return -1
+
+    now = datetime.now(timezone.utc)
+    return max(0, (now - oldest_timestamp).days)
+
+
+def _derive_previous_token_launches(
+    wallet_address: str,
+    transactions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Derive creator launch history from fetched transactions."""
+    created_mints = set()
+    latest_launch_timestamp: Optional[int] = None
+
+    for tx in transactions:
+        tx_type = str(tx.get("type", "")).upper()
+        if not (
+            "CREATE" in tx_type
+            or "INITIALIZE_MINT" in tx_type
+            or tx_type in {"MINT_TO", "CREATE_TOKEN", "CREATE_MINT"}
+        ):
+            continue
+
+        fee_payer = (
+            tx.get("feePayer")
+            or tx.get("feePayerAccount")
+            or tx.get("source")
+            or ""
+        )
+        if fee_payer and fee_payer != wallet_address:
+            continue
+
+        for transfer in tx.get("tokenTransfers", []):
+            mint = transfer.get("mint", "")
+            if mint:
+                created_mints.add(mint)
+
+        timestamp = tx.get("timestamp")
+        if isinstance(timestamp, int):
+            if latest_launch_timestamp is None or timestamp > latest_launch_timestamp:
+                latest_launch_timestamp = timestamp
+
+    days_since_last_launch: Optional[int] = None
+    if latest_launch_timestamp is not None:
+        launch_dt = datetime.fromtimestamp(latest_launch_timestamp, tz=timezone.utc)
+        days_since_last_launch = max(0, (datetime.now(timezone.utc) - launch_dt).days)
+
+    return {
+        "prior_launch_count": max(0, len(created_mints) - 1),
+        "abandoned_tokens": [],
+        "days_since_last_launch": days_since_last_launch,
+    }
+
+
+def get_creator_history_summary(
+    wallet_address: str, max_pages: int = 5
+) -> Dict[str, Any]:
+    """Get creator age + launch history from one transaction fetch (cached)."""
+    now = datetime.now(timezone.utc).timestamp()
+    cached = _CREATOR_HISTORY_CACHE.get(wallet_address)
+    if cached and now - cached["cached_at"] < _CREATOR_HISTORY_CACHE_TTL_SECONDS:
+        return dict(cached["data"])
+
+    transactions = _fetch_creator_transactions(wallet_address, max_pages=max_pages)
+    age_days = _derive_wallet_age_days(transactions)
+    launches = _derive_previous_token_launches(wallet_address, transactions)
+    data = {
+        "wallet_age_days": age_days,
+        "prior_launch_count": launches["prior_launch_count"],
+        "abandoned_tokens": launches["abandoned_tokens"],
+        "days_since_last_launch": launches["days_since_last_launch"],
+    }
+    _CREATOR_HISTORY_CACHE[wallet_address] = {"cached_at": now, "data": dict(data)}
+    return data
+
 
 def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
     """Make a request to the Helius API."""
@@ -98,40 +217,8 @@ def get_wallet_age_days(wallet_address: str, max_pages: int = 5) -> int:
     - Age in days (0 if unknown, -1 if error)
     - HIGH RISK if creator wallet is less than 7 days old
     """
-    # Paginate through history using "before" cursor to reduce age underestimation.
-    oldest_timestamp: Optional[datetime] = None
-    before: Optional[str] = None
-
-    for _ in range(max_pages):
-        transactions = get_wallet_transaction_history(
-            wallet_address, limit=100, before=before
-        )
-        if not transactions:
-            break
-
-        for tx in transactions:
-            timestamp = tx.get("timestamp")
-            if timestamp:
-                tx_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-                if oldest_timestamp is None or tx_time < oldest_timestamp:
-                    oldest_timestamp = tx_time
-
-        if len(transactions) < 100:
-            break
-
-        next_before = transactions[-1].get("signature")
-        if not next_before or next_before == before:
-            break
-        before = next_before
-
-    if oldest_timestamp is None:
-        return -1
-    
-    # Calculate age in days
-    now = datetime.now(timezone.utc)
-    age_days = (now - oldest_timestamp).days
-    
-    return max(0, age_days)
+    transactions = _fetch_creator_transactions(wallet_address, max_pages=max_pages)
+    return _derive_wallet_age_days(transactions)
 
 
 def get_previous_token_launches(wallet_address: str) -> Dict[str, Any]:
@@ -143,65 +230,8 @@ def get_previous_token_launches(wallet_address: str) -> Dict[str, Any]:
     - abandoned_tokens: list of token mints where liquidity was removed
     - days_since_last_launch: int (None if first launch)
     """
-    created_mints = set()
-    latest_launch_timestamp: Optional[int] = None
-    before: Optional[str] = None
-
-    for _ in range(3):
-        transactions = get_wallet_transaction_history(
-            wallet_address, limit=100, before=before
-        )
-        if not transactions:
-            break
-
-        for tx in transactions:
-            tx_type = str(tx.get("type", "")).upper()
-            if not (
-                "CREATE" in tx_type
-                or "INITIALIZE_MINT" in tx_type
-                or tx_type in {"MINT_TO", "CREATE_TOKEN", "CREATE_MINT"}
-            ):
-                continue
-
-            fee_payer = (
-                tx.get("feePayer")
-                or tx.get("feePayerAccount")
-                or tx.get("source")
-                or ""
-            )
-            if fee_payer and fee_payer != wallet_address:
-                continue
-
-            for transfer in tx.get("tokenTransfers", []):
-                mint = transfer.get("mint", "")
-                if mint:
-                    created_mints.add(mint)
-
-            timestamp = tx.get("timestamp")
-            if isinstance(timestamp, int):
-                if latest_launch_timestamp is None or timestamp > latest_launch_timestamp:
-                    latest_launch_timestamp = timestamp
-
-        if len(transactions) < 100:
-            break
-        next_before = transactions[-1].get("signature")
-        if not next_before or next_before == before:
-            break
-        before = next_before
-
-    days_since_last_launch: Optional[int] = None
-    if latest_launch_timestamp is not None:
-        launch_dt = datetime.fromtimestamp(latest_launch_timestamp, tz=timezone.utc)
-        days_since_last_launch = max(0, (datetime.now(timezone.utc) - launch_dt).days)
-
-    # We avoid inferring abandoned launches from transfer activity only.
-    abandoned_tokens: List[str] = []
-
-    return {
-        "prior_launch_count": max(0, len(created_mints) - 1),
-        "abandoned_tokens": abandoned_tokens,
-        "days_since_last_launch": days_since_last_launch,
-    }
+    transactions = _fetch_creator_transactions(wallet_address, max_pages=3)
+    return _derive_previous_token_launches(wallet_address, transactions)
 
 
 def check_wallet_clustering(holder_wallets: List[str]) -> Dict[str, Any]:
@@ -433,15 +463,15 @@ def analyze_creator_wallet(wallet_address: str) -> Dict[str, Any]:
     
     Combines age, prior launches, and behavioral patterns.
     """
-    age = get_wallet_age_days(wallet_address)
-    prior = get_previous_token_launches(wallet_address)
-    
+    summary = get_creator_history_summary(wallet_address, max_pages=5)
+    age = summary["wallet_age_days"]
+
     return {
         "wallet_address": wallet_address,
         "wallet_age_days": age,
-        "prior_launch_count": prior["prior_launch_count"],
-        "abandoned_tokens": prior["abandoned_tokens"],
-        "days_since_last_launch": prior["days_since_last_launch"],
+        "prior_launch_count": summary["prior_launch_count"],
+        "abandoned_tokens": summary["abandoned_tokens"],
+        "days_since_last_launch": summary["days_since_last_launch"],
         "is_new_wallet": age < 7,
-        "has_rug_history": len(prior["abandoned_tokens"]) > 0
+        "has_rug_history": len(summary["abandoned_tokens"]) > 0,
     }

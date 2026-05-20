@@ -137,3 +137,51 @@ def test_get_token_holders_does_not_fabricate_total_holder_count():
     assert result is not None
     assert result["sampled_holder_count"] == 20
     assert result["total_holders"] is None
+
+
+def test_analyze_creator_wallet_fetches_history_once():
+    """Creator summary should reuse a single paginated history fetch."""
+    txs = [
+        {
+            "signature": "sig-1",
+            "type": "CREATE_TOKEN",
+            "feePayer": "wallet-1",
+            "tokenTransfers": [{"mint": "MintA"}],
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+        }
+    ]
+
+    with patch.object(
+        helius_client,
+        "get_wallet_transaction_history",
+        return_value=txs,
+    ) as mock_history:
+        result = helius_client.analyze_creator_wallet("wallet-1")
+
+    assert result["prior_launch_count"] == 0
+    assert mock_history.call_count == 1
+
+
+def test_creator_history_summary_uses_cache_between_calls():
+    """Creator history summary should hit API once within cache TTL."""
+    txs = [
+        {
+            "signature": "sig-1",
+            "type": "CREATE_TOKEN",
+            "feePayer": "wallet-cache",
+            "tokenTransfers": [{"mint": "MintA"}],
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+        }
+    ]
+    helius_client._CREATOR_HISTORY_CACHE.clear()
+
+    with patch.object(
+        helius_client,
+        "get_wallet_transaction_history",
+        return_value=txs,
+    ) as mock_history:
+        first = helius_client.get_creator_history_summary("wallet-cache")
+        second = helius_client.get_creator_history_summary("wallet-cache")
+
+    assert first["wallet_age_days"] == second["wallet_age_days"]
+    assert mock_history.call_count == 1
