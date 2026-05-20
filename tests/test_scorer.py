@@ -123,3 +123,16 @@ def test_calculate_risk_score_removes_missing_bubblemaps_as_risk_factor():
             result = scorer.calculate_risk_score(token_data)
 
     assert result["top_risk_factors"] == ["Low holder count"]
+
+
+def test_parse_llm_json_response_handles_extra_braces_in_trailing_noise():
+    """Balanced object extraction should ignore trailing brace-like noise."""
+    payload = (
+        'prefix {"risk_score": 40, "risk_level": "MEDIUM", "verdict": "ok", '
+        '"top_risk_factors": [], "top_safe_signals": []} trailing note with {bad'
+    )
+
+    result = scorer._parse_llm_json_response(payload)
+
+    assert result["risk_score"] == 40
+    assert result["risk_level"] == "MEDIUM"

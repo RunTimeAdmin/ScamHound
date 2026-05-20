@@ -173,14 +173,48 @@ def _parse_llm_json_response(response_text: str) -> Dict[str, Any]:
         candidate = text.split("```", 1)[1].split("```", 1)[0].strip()
         return json.loads(candidate)
 
-    # Fallback: extract first JSON object-like span
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return json.loads(text[start : end + 1])
+    # Fallback: extract first syntactically balanced JSON object.
+    candidate = _extract_first_json_object(text)
+    if candidate:
+        return json.loads(candidate)
 
     # Preserve original parse exception semantics for callers
     return json.loads(text)
+
+
+def _extract_first_json_object(text: str) -> str:
+    """Extract the first balanced JSON object from noisy text."""
+    start = -1
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for i, ch in enumerate(text):
+        if start == -1:
+            if ch == "{":
+                start = i
+                depth = 1
+            continue
+
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+
+    return ""
 
 
 def _sanitize_verdict(verdict: str, token_data: Dict[str, Any]) -> str:
