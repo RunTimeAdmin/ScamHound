@@ -10,6 +10,7 @@ import threading
 import csv
 import io
 import re
+from xml.sax.saxutils import escape
 from datetime import datetime
 from typing import Dict, List, Optional
 # Type imports removed - not needed
@@ -1298,13 +1299,24 @@ async def export_csv(request: Request):
         )
 
     try:
-        # Get all scored tokens (no limit)
-        scores = database.get_recent_scores(limit=10000)
+        # Get capped token set for export
+        export_limit = 10000
+        scores = database.get_recent_scores(limit=export_limit)
+        total_scanned = database.get_stats().get("total_scanned", len(scores))
+        is_truncated = total_scanned > export_limit
         
         # Create CSV in memory
         output = io.StringIO()
         writer = csv.writer(output)
         
+        # Write truncation warning row if the export is capped
+        if is_truncated:
+            writer.writerow([
+                "NOTE",
+                f"Export truncated to {export_limit} rows out of {total_scanned} total scans."
+            ])
+            writer.writerow([])
+
         # Write header
         writer.writerow([
             "Token Name", "Symbol", "Mint Address", "Score", "Risk Level",
@@ -1375,8 +1387,11 @@ async def export_pdf(request: Request):
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import inch
         
-        # Get all scored tokens
-        scores = database.get_recent_scores(limit=10000)
+        # Get capped token set for export
+        export_limit = 10000
+        scores = database.get_recent_scores(limit=export_limit)
+        total_scanned = database.get_stats().get("total_scanned", len(scores))
+        is_truncated = total_scanned > export_limit
         
         # Create PDF in memory
         buffer = io.BytesIO()
@@ -1422,8 +1437,21 @@ async def export_pdf(request: Request):
         high_risk = sum(1 for s in scores if s.get("risk_level") == "HIGH")
         critical = sum(1 for s in scores if s.get("risk_level") == "CRITICAL")
         
-        summary_text = f"Total Tokens Scanned: {total} | High Risk: {high_risk} | Critical: {critical}"
+        summary_text = (
+            f"Total Tokens Scanned: {total} | High Risk: {high_risk} | "
+            f"Critical: {critical}"
+        )
         elements.append(Paragraph(summary_text, styles['Normal']))
+        if is_truncated:
+            elements.append(
+                Paragraph(
+                    (
+                        f"NOTE: Export truncated to {export_limit} rows out of "
+                        f"{total_scanned} total scans."
+                    ),
+                    styles['Normal'],
+                )
+            )
         elements.append(Spacer(1, 0.3*inch))
         
         if not scores:
@@ -1433,9 +1461,9 @@ async def export_pdf(request: Request):
             table_data = [["Token", "Mint", "Score", "Risk", "Verdict"]]
             
             for token in scores:
-                symbol = token.get("symbol") or "???"
-                name = token.get("name") or "Unknown"
-                token_display = f"{symbol}<br/><font size='8' color='#6e7681'>{name}</font>"
+                symbol = escape(str(token.get("symbol") or "???"))
+                name = escape(str(token.get("name") or "Unknown"))
+                token_display = f"{symbol} - {name}"
                 
                 mint = token.get("token_mint") or ""
                 mint_short = f"{mint[:8]}...{mint[-8:]}" if len(mint) > 20 else mint
