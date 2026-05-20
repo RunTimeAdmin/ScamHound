@@ -342,13 +342,34 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
     platform = score_data.get("platform", "bags")
 
     cursor.execute("""
-        INSERT OR REPLACE INTO scored_tokens (
+        INSERT INTO scored_tokens (
             token_mint, name, symbol, risk_score, risk_level, ai_verdict,
             top_risk_factors, top_safe_signals, top_10_concentration,
             creator_wallet, creator_username, prior_launches, wallet_age_days,
             clustering_score, liquidity_usd, lifetime_fees_sol, created_at, score_source,
-            platform
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            platform, user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(token_mint) DO UPDATE SET
+            name = excluded.name,
+            symbol = excluded.symbol,
+            risk_score = excluded.risk_score,
+            risk_level = excluded.risk_level,
+            ai_verdict = excluded.ai_verdict,
+            top_risk_factors = excluded.top_risk_factors,
+            top_safe_signals = excluded.top_safe_signals,
+            top_10_concentration = excluded.top_10_concentration,
+            creator_wallet = excluded.creator_wallet,
+            creator_username = excluded.creator_username,
+            prior_launches = excluded.prior_launches,
+            wallet_age_days = excluded.wallet_age_days,
+            clustering_score = excluded.clustering_score,
+            liquidity_usd = excluded.liquidity_usd,
+            lifetime_fees_sol = excluded.lifetime_fees_sol,
+            created_at = excluded.created_at,
+            score_source = excluded.score_source,
+            platform = excluded.platform,
+            user_id = COALESCE(excluded.user_id, scored_tokens.user_id),
+            scored_at = CURRENT_TIMESTAMP
     """, (
         score_data.get("token_mint"),
         score_data.get("name"),
@@ -368,7 +389,8 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
         score_data.get("lifetime_fees_sol"),
         score_data.get("created_at"),
         source,
-        platform
+        platform,
+        score_data.get("user_id"),
     ))
     
     # Append to score history
