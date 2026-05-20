@@ -90,8 +90,8 @@ def format_tweet(token: Dict[str, Any]) -> str:
     # Format based on risk level
     if risk_level == "CRITICAL":
         # Critical alert format
-        tweet = f"🚨🚨 CRITICAL RUG PULL WARNING — ${symbol} on @BagsApp\n\n"
-        tweet += f"💀 Risk Score: {score}/100 — CRITICAL\n"
+        tweet = f"🚨🚨 CRITICAL RISK INDICATORS — ${symbol} on @BagsApp\n\n"
+        tweet += f"💀 Risk Score: {score}/100 — CRITICAL (automated signal)\n"
         
         if risk_factors and len(risk_factors) > 0:
             tweet += f"🔴 {risk_factors[0][:50]}\n"
@@ -108,7 +108,7 @@ def format_tweet(token: Dict[str, Any]) -> str:
         
     else:
         # High risk format
-        tweet = f"🚨 HIGH RISK ALERT — ${symbol} on @BagsApp\n\n"
+        tweet = f"🚨 HIGH-RISK INDICATORS — ${symbol} on @BagsApp\n\n"
         tweet += f"⚠️ Risk Score: {score}/100\n"
         tweet += f"📊 Top 10 holders: {concentration:.1f}% of supply\n"
         

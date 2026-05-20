@@ -9,6 +9,7 @@ import time
 import threading
 import csv
 import io
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 # Type imports removed - not needed
@@ -37,6 +38,8 @@ from auth import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+SOLANA_ADDRESS_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 # Rate limiting storage: {ip: [timestamp1, timestamp2, ...]}
 _rate_limit_store: Dict[str, List[float]] = {}
@@ -205,6 +208,11 @@ def _get_client_ip(request: Request) -> str:
         return real_ip
 
     return request.client.host if request.client else "unknown"
+
+
+def _is_valid_solana_address(value: str) -> bool:
+    """Validate Solana base58 address/mint format."""
+    return bool(SOLANA_ADDRESS_RE.fullmatch(value or ""))
 
 
 def _add_rate_limit_headers(response: JSONResponse, key_row: dict) -> JSONResponse:
@@ -664,8 +672,8 @@ async def api_add_to_watchlist(request: Request):
                 status_code=400
             )
         
-        # Basic validation for Solana wallet address
-        if len(wallet_address) < 32 or len(wallet_address) > 44:
+        # Validate Solana wallet format (base58, 32-44 chars)
+        if not _is_valid_solana_address(wallet_address):
             return JSONResponse(
                 content={"success": False, "error": "Invalid wallet address format"},
                 status_code=400
@@ -701,6 +709,12 @@ async def api_remove_from_watchlist(request: Request, wallet_address: str):
         return JSONResponse(
             content={"success": False, "error": "Admin access required"},
             status_code=401
+        )
+
+    if not _is_valid_solana_address(wallet_address):
+        return JSONResponse(
+            content={"success": False, "error": "Invalid wallet address format"},
+            status_code=400
         )
 
     try:
@@ -760,6 +774,9 @@ async def api_user_watchlist_add(request: Request):
     if not wallet_address:
         return JSONResponse(status_code=400, content={"error": "wallet_address required"})
 
+    if not _is_valid_solana_address(wallet_address):
+        return JSONResponse(status_code=400, content={"error": "Invalid wallet address format"})
+
     # Cap at 50 wallets per user
     current = database.get_user_watchlist(key_row["id"])
     if len(current) >= 50:
@@ -783,6 +800,9 @@ async def api_user_watchlist_remove(request: Request, wallet_address: str):
         return JSONResponse(status_code=401, content={"error": "API key required"})
     if key_row["tier"] == "free":
         return JSONResponse(status_code=403, content={"error": "Pro tier or higher required"})
+
+    if not _is_valid_solana_address(wallet_address):
+        return JSONResponse(status_code=400, content={"error": "Invalid wallet address format"})
 
     success = database.remove_from_user_watchlist(key_row["id"], wallet_address)
     if not success:
@@ -899,8 +919,8 @@ async def scan_token(request: Request):
                 status_code=400
             )
         
-        # Validate mint address format (basic check)
-        if len(token_mint) < 32 or len(token_mint) > 44:
+        # Validate Solana mint format (base58, 32-44 chars)
+        if not _is_valid_solana_address(token_mint):
             return JSONResponse(
                 content={"success": False, "error": "Invalid mint address format"},
                 status_code=400
@@ -991,8 +1011,11 @@ async def api_scan_batch(request: Request):
     if len(mints) > 50:
         return JSONResponse(status_code=400, content={"error": "Maximum 50 mints per batch"})
     
-    # Validate each mint is a string
-    mints = [m.strip() for m in mints if isinstance(m, str) and m.strip()]
+    # Validate each mint is a non-empty, base58-formatted Solana address
+    mints = [
+        m.strip() for m in mints
+        if isinstance(m, str) and _is_valid_solana_address(m.strip())
+    ]
     if not mints:
         return JSONResponse(status_code=400, content={"error": "No valid mint addresses provided"})
     
