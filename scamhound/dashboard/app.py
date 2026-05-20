@@ -1896,26 +1896,45 @@ async def list_api_keys(request: Request):
 @app.delete("/api/scores/clear")
 async def clear_scores(request: Request):
     """Clear scan results. Admin clears all; regular user clears own."""
-    user = get_current_user(request)
-    if not user:
-        # Fallback to old Bearer token auth (admin only)
-        if not _verify_auth(request):
-            return JSONResponse(
-                content={"success": False, "error": "Unauthorized. Authentication required."},
-                status_code=401
-            )
-        # Old-style admin auth — clear all
-        result = database.clear_all_scores()
-        logger.info(f"[SCAMHOUND] Cleared all scans (admin token): {result}")
-        return JSONResponse(content={"status": "cleared", **result})
+    request_id = getattr(request.state, "request_id", "")
+    try:
+        user = get_current_user(request)
+        if not user:
+            # Fallback to old Bearer token auth (admin only)
+            if not _verify_auth(request):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "error": "Unauthorized. Authentication required.",
+                    },
+                    status_code=401,
+                )
+            # Old-style admin auth — clear all
+            result = database.clear_all_scores()
+            logger.info(f"[SCAMHOUND] Cleared all scans (admin token): {result}")
+            return JSONResponse(content={"status": "cleared", **result})
 
-    if user['is_admin']:
-        result = database.clear_all_scores()
-        logger.info(f"[SCAMHOUND] Cleared all scans by admin {user['email']}: {result}")
-    else:
-        result = database.clear_user_scans(user['id'])
-        logger.info(f"[SCAMHOUND] Cleared user scans for {user['email']}: {result}")
-    return JSONResponse(content={"status": "cleared", **result})
+        if user["is_admin"]:
+            result = database.clear_all_scores()
+            logger.info(
+                f"[SCAMHOUND] Cleared all scans by admin {user['email']}: {result}"
+            )
+        else:
+            result = database.clear_user_scans(user["id"])
+            logger.info(
+                f"[SCAMHOUND] Cleared user scans for {user['email']}: {result}"
+            )
+        return JSONResponse(content={"status": "cleared", **result})
+    except Exception as e:
+        logger.error(f"[SCAMHOUND] Failed to clear scans: {e}")
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "Internal Server Error",
+                "request_id": request_id,
+            },
+            status_code=500,
+        )
 
 
 @app.websocket("/ws/scores")
