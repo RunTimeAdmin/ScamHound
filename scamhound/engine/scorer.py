@@ -223,9 +223,6 @@ def _sanitize_risk_factors(
     """Remove known non-risk or contradictory factors from model output."""
     wallet_age_days = token_data.get("wallet_age_days")
     token_age_minutes = token_data.get("token_age_minutes")
-    has_bubblemaps_data = (
-        token_data.get("bubblemaps", {}).get("decentralization_score") is not None
-    )
 
     sanitized = []
     for factor in factors:
@@ -235,7 +232,12 @@ def _sanitize_risk_factors(
         if isinstance(wallet_age_days, (int, float)) and wallet_age_days >= 0:
             if "wallet age unknown" in lower:
                 continue
-        if has_bubblemaps_data and "bubblemaps" in lower and "no" in lower:
+        if "bubblemaps" in lower and (
+            "no " in lower
+            or "unavailable" in lower
+            or "missing" in lower
+            or "not available" in lower
+        ):
             continue
         if isinstance(token_age_minutes, (int, float)) and token_age_minutes >= 60:
             if "very early stage" in lower or "brand new" in lower:

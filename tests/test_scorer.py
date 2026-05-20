@@ -104,3 +104,22 @@ def test_calculate_risk_score_sanitizes_age_and_unknown_data_claims():
     assert "brand new" not in result["verdict"].lower()
     assert "0 minutes old" not in result["verdict"].lower()
     assert result["top_risk_factors"] == ["Low liquidity for age"]
+
+
+def test_calculate_risk_score_removes_missing_bubblemaps_as_risk_factor():
+    """Missing BubbleMaps data should never be counted as a risk factor."""
+    llm_payload = (
+        '{"risk_score":58,"risk_level":"MEDIUM","verdict":"ok",'
+        '"top_risk_factors":["No BubbleMaps data available for cluster analysis","Low holder count"],'
+        '"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["token_age_minutes"] = 120
+    token_data["wallet_age_days"] = 14
+    token_data["bubblemaps"] = {}
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["top_risk_factors"] == ["Low holder count"]
