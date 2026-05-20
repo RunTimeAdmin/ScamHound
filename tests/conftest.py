@@ -33,6 +33,7 @@ def mock_env_vars():
         "BIRDEYE_API_KEY": "test_birdeye_key",
         "BUBBLEMAPS_API_KEY": "test_bubblemaps_key",
         "ANTHROPIC_API_KEY": "test_anthropic_key",
+        "JWT_SECRET": "test_jwt_secret_at_least_thirty_two_chars",
         "RISK_ALERT_THRESHOLD": "65",
         "POLL_INTERVAL_SECONDS": "60",
         "SCAMHOUND_ADMIN_TOKEN": "test_admin_token",
@@ -207,7 +208,7 @@ def reset_config_module():
         "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN",
         "TWITTER_ACCESS_SECRET", "TWITTER_BEARER_TOKEN",
         "RISK_ALERT_THRESHOLD", "POLL_INTERVAL_SECONDS",
-        "SCAMHOUND_ADMIN_TOKEN"
+        "SCAMHOUND_ADMIN_TOKEN", "JWT_SECRET"
     ]
     
     for key in config_keys:

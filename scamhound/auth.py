@@ -4,12 +4,10 @@ Google OAuth authentication and JWT session management for ScamHound.
 import os
 import logging
 from datetime import datetime, timedelta
-from functools import wraps
 
 import jwt
 from authlib.integrations.starlette_client import OAuth
 from starlette.requests import Request
-from starlette.responses import RedirectResponse
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +21,9 @@ def init_oauth():
         name='google',
         client_id=os.environ.get('GOOGLE_CLIENT_ID', ''),
         client_secret=os.environ.get('GOOGLE_CLIENT_SECRET', ''),
-        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+        server_metadata_url=(
+            'https://accounts.google.com/.well-known/openid-configuration'
+        ),
         client_kwargs={
             'scope': 'openid email profile'
         }
@@ -39,8 +39,18 @@ JWT_EXPIRATION_HOURS = 24
 def _get_jwt_secret():
     global JWT_SECRET
     if JWT_SECRET is None:
-        JWT_SECRET = os.environ.get('JWT_SECRET', 'dev-secret-change-in-production')
+        secret = os.environ.get("JWT_SECRET", "")
+        if len(secret) < 32:
+            raise RuntimeError(
+                "JWT_SECRET must be set and at least 32 characters long."
+            )
+        JWT_SECRET = secret
     return JWT_SECRET
+
+
+def get_jwt_secret() -> str:
+    """Public accessor for shared JWT/session secret."""
+    return _get_jwt_secret()
 
 
 def create_jwt(user_id: int, email: str, is_admin: bool) -> str:
@@ -56,7 +66,7 @@ def create_jwt(user_id: int, email: str, is_admin: bool) -> str:
 
 
 def decode_jwt(token: str) -> dict:
-    """Decode and validate a JWT token. Returns payload dict or None."""
+    """Decode and validate a JWT token."""
     try:
         payload = jwt.decode(token, _get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         return payload

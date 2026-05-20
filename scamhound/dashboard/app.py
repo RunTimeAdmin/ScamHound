@@ -27,7 +27,13 @@ from apscheduler.triggers.interval import IntervalTrigger
 from engine import database
 from engine import monitor
 from config import get_masked_keys, save_config, load_config
-from auth import oauth, init_oauth, get_current_user, create_jwt
+from auth import (
+    oauth,
+    init_oauth,
+    get_current_user,
+    create_jwt,
+    get_jwt_secret,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -181,6 +187,24 @@ def _check_api_key(request: Request) -> tuple:
     return key_row, None
 
 
+def _get_client_ip(request: Request) -> str:
+    """
+    Resolve client IP behind reverse proxies.
+    Prefers X-Forwarded-For then X-Real-IP, with socket fallback.
+    """
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        first_hop = forwarded_for.split(",")[0].strip()
+        if first_hop:
+            return first_hop
+
+    real_ip = request.headers.get("X-Real-IP", "").strip()
+    if real_ip:
+        return real_ip
+
+    return request.client.host if request.client else "unknown"
+
+
 def _add_rate_limit_headers(response: JSONResponse, key_row: dict) -> JSONResponse:
     """Add X-RateLimit headers to response."""
     if key_row:
@@ -202,7 +226,7 @@ app = FastAPI(
 )
 
 # Session middleware required by Authlib for OAuth state
-app.add_middleware(SessionMiddleware, secret_key=os.environ.get("JWT_SECRET", "dev-secret"))
+app.add_middleware(SessionMiddleware, secret_key=get_jwt_secret())
 
 # Get the directory paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -324,6 +348,10 @@ async def watchlist_page(request: Request):
     Watchlist page.
     Shows all watched wallets with management UI.
     """
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return RedirectResponse(url="/", status_code=302)
+
     watchlist = database.get_watchlist()
     
     return templates.TemplateResponse(
@@ -586,11 +614,18 @@ async def api_stats():
 
 
 @app.get("/api/watchlist")
-async def api_watchlist():
+async def api_watchlist(request: Request):
     """
     API endpoint for watchlist.
     Returns all watchlist entries as JSON.
     """
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse(
+            content={"success": False, "error": "Admin access required"},
+            status_code=401
+        )
+
     watchlist = database.get_watchlist()
     return JSONResponse(content=watchlist)
 
@@ -601,6 +636,13 @@ async def api_add_to_watchlist(request: Request):
     Add a wallet to the watchlist.
     Accepts JSON: {"wallet_address": "...", "label": "...", "notes": "..."}
     """
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse(
+            content={"success": False, "error": "Admin access required"},
+            status_code=401
+        )
+
     try:
         data = await request.json()
         
@@ -648,10 +690,17 @@ async def api_add_to_watchlist(request: Request):
 
 
 @app.delete("/api/watchlist/{wallet_address}")
-async def api_remove_from_watchlist(wallet_address: str):
+async def api_remove_from_watchlist(request: Request, wallet_address: str):
     """
     Remove a wallet from the watchlist.
     """
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return JSONResponse(
+            content={"success": False, "error": "Admin access required"},
+            status_code=401
+        )
+
     try:
         success = database.remove_from_watchlist(wallet_address)
         
@@ -802,7 +851,7 @@ async def scan_token(request: Request):
 
     # If no API key, fall back to IP-based rate limiting
     if not key_row:
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = _get_client_ip(request)
         allowed, remaining, retry_after = _check_rate_limit(client_ip)
         
         if not allowed:

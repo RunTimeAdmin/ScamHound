@@ -166,7 +166,13 @@
             tbody.innerHTML = '';
 
             if (creators.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No creators match your criteria.</td></tr>';
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 8;
+                cell.className = 'empty-state';
+                cell.textContent = 'No creators match your criteria.';
+                row.appendChild(cell);
+                tbody.appendChild(row);
                 return;
             }
 
@@ -187,16 +193,47 @@
 
                 const tr = document.createElement('tr');
                 tr.className = rowClass;
-                tr.innerHTML = `
-                    <td class="leaderboard-rank">${index + 1}</td>
-                    <td><a href="/api/creator/${wallet}" class="leaderboard-wallet" title="${wallet}">${walletShort}</a></td>
-                    <td>${creator.total_tokens}</td>
-                    <td><span class="score-badge ${badgeClass}">${avg}</span></td>
-                    <td>${creator.high_risk_count}</td>
-                    <td>${creator.critical_count}</td>
-                    <td>${creator.low_risk_count}</td>
-                    <td class="time-cell">${lastActive}</td>
-                `;
+
+                const rankTd = document.createElement('td');
+                rankTd.className = 'leaderboard-rank';
+                rankTd.textContent = index + 1;
+
+                const walletTd = document.createElement('td');
+                const walletLink = document.createElement('a');
+                walletLink.href = `/api/creator/${encodeURIComponent(wallet)}`;
+                walletLink.className = 'leaderboard-wallet';
+                walletLink.title = wallet;
+                walletLink.textContent = walletShort;
+                walletTd.appendChild(walletLink);
+
+                const totalTd = document.createElement('td');
+                totalTd.textContent = creator.total_tokens ?? 0;
+
+                const avgTd = document.createElement('td');
+                const avgBadge = document.createElement('span');
+                avgBadge.className = `score-badge ${badgeClass}`;
+                avgBadge.textContent = avg;
+                avgTd.appendChild(avgBadge);
+
+                const highTd = document.createElement('td');
+                highTd.textContent = creator.high_risk_count ?? 0;
+                const criticalTd = document.createElement('td');
+                criticalTd.textContent = creator.critical_count ?? 0;
+                const lowTd = document.createElement('td');
+                lowTd.textContent = creator.low_risk_count ?? 0;
+
+                const lastTd = document.createElement('td');
+                lastTd.className = 'time-cell';
+                lastTd.textContent = lastActive;
+
+                tr.appendChild(rankTd);
+                tr.appendChild(walletTd);
+                tr.appendChild(totalTd);
+                tr.appendChild(avgTd);
+                tr.appendChild(highTd);
+                tr.appendChild(criticalTd);
+                tr.appendChild(lowTd);
+                tr.appendChild(lastTd);
                 tbody.appendChild(tr);
             });
         }

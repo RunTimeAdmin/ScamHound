@@ -65,7 +65,9 @@ def main():
         app,
         host=host,
         port=port,
-        log_level="info"
+        log_level="info",
+        proxy_headers=True,
+        forwarded_allow_ips="127.0.0.1"
     )
 
 

@@ -54,7 +54,6 @@
             vertical-align: middle;
         }
     </style>
-<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
 </head>
 <body>
     <header>
@@ -379,7 +378,15 @@
             if (currentUser.picture_url) {
                 const userInfo = document.createElement('span');
                 userInfo.className = 'user-info';
-                userInfo.innerHTML = `<img src="${currentUser.picture_url}" alt="" class="user-avatar"> ${currentUser.name || currentUser.email}`;
+                const avatar = document.createElement('img');
+                avatar.className = 'user-avatar';
+                avatar.alt = '';
+                avatar.src = currentUser.picture_url;
+                userInfo.appendChild(avatar);
+
+                const label = document.createElement('span');
+                label.textContent = ` ${currentUser.name || currentUser.email}`;
+                userInfo.appendChild(label);
                 navLinks.insertBefore(userInfo, document.getElementById('logout-link'));
             }
         }
@@ -551,43 +558,96 @@
             }
         }
 
+        function buildTokenRowDom(token, extraRowClass = '') {
+            const riskClass = 'risk-' + (token.risk_level ? token.risk_level.toLowerCase() : 'unknown');
+            const symbol = token.symbol || '???';
+            const name = token.name || 'Unknown';
+            const score = token.risk_score || 0;
+            const riskLevel = token.risk_level || 'UNKNOWN';
+            const creator = token.creator_username;
+            const concentration = token.top_10_concentration;
+            const walletAge = token.wallet_age_days;
+            const verdict = (token.ai_verdict || '').substring(0, 60);
+            const verdictTruncated = (token.ai_verdict || '').length > 60 ? '...' : '';
+            const scoredAt = token.scored_at ? token.scored_at.substring(0, 16) : '\u2014';
+            const tokenMint = token.token_mint || '';
+
+            const tr = document.createElement('tr');
+            tr.className = extraRowClass ? `${riskClass} ${extraRowClass}` : riskClass;
+
+            const tokenCell = document.createElement('td');
+            const tokenLink = document.createElement('a');
+            tokenLink.href = `/token/${encodeURIComponent(tokenMint)}`;
+            const strong = document.createElement('strong');
+            strong.textContent = symbol;
+            const tokenNameSpan = document.createElement('span');
+            tokenNameSpan.className = 'token-name';
+            tokenNameSpan.textContent = name;
+            tokenLink.appendChild(strong);
+            tokenLink.appendChild(tokenNameSpan);
+            tokenCell.appendChild(tokenLink);
+
+            const scoreCell = document.createElement('td');
+            const scoreBadge = document.createElement('span');
+            scoreBadge.className = 'score-badge';
+            scoreBadge.textContent = score;
+            scoreCell.appendChild(scoreBadge);
+
+            const riskCell = document.createElement('td');
+            const riskBadge = document.createElement('span');
+            riskBadge.className = `risk-badge ${riskClass}`;
+            riskBadge.textContent = riskLevel;
+            riskCell.appendChild(riskBadge);
+
+            const creatorCell = document.createElement('td');
+            const creatorSpan = document.createElement('span');
+            creatorSpan.className = creator ? 'creator' : 'creator-muted';
+            creatorSpan.textContent = creator ? `@${creator}` : 'Unknown';
+            creatorCell.appendChild(creatorSpan);
+
+            const concentrationCell = document.createElement('td');
+            concentrationCell.textContent = concentration ? concentration.toFixed(1) + '%' : '\u2014';
+
+            const walletAgeCell = document.createElement('td');
+            walletAgeCell.textContent = walletAge !== null && walletAge >= 0 ? walletAge + 'd' : '\u2014';
+
+            const verdictCell = document.createElement('td');
+            verdictCell.className = 'verdict-cell';
+            verdictCell.textContent = verdict + verdictTruncated;
+
+            const timeCell = document.createElement('td');
+            timeCell.className = 'time-cell';
+            timeCell.textContent = scoredAt;
+
+            tr.appendChild(tokenCell);
+            tr.appendChild(scoreCell);
+            tr.appendChild(riskCell);
+            tr.appendChild(creatorCell);
+            tr.appendChild(concentrationCell);
+            tr.appendChild(walletAgeCell);
+            tr.appendChild(verdictCell);
+            tr.appendChild(timeCell);
+            return tr;
+        }
+
         function renderTokenTable(tokens) {
             const tbody = document.querySelector('.token-table tbody');
             if (!tbody) return;
             tbody.innerHTML = '';
 
             if (tokens.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No tokens match your filters.</td></tr>';
+                const row = document.createElement('tr');
+                const cell = document.createElement('td');
+                cell.colSpan = 8;
+                cell.className = 'empty-state';
+                cell.textContent = 'No tokens match your filters.';
+                row.appendChild(cell);
+                tbody.appendChild(row);
                 return;
             }
 
             tokens.forEach(token => {
-                const riskClass = 'risk-' + (token.risk_level ? token.risk_level.toLowerCase() : 'unknown');
-                const symbol = token.symbol || '???';
-                const name = token.name || 'Unknown';
-                const score = token.risk_score || 0;
-                const riskLevel = token.risk_level || 'UNKNOWN';
-                const creator = token.creator_username;
-                const concentration = token.top_10_concentration;
-                const walletAge = token.wallet_age_days;
-                const verdict = (token.ai_verdict || '').substring(0, 60);
-                const verdictTruncated = (token.ai_verdict || '').length > 60 ? '...' : '';
-                const scoredAt = token.scored_at ? token.scored_at.substring(0, 16) : '\u2014';
-                const tokenMint = token.token_mint || '';
-
-                const tr = document.createElement('tr');
-                tr.className = riskClass;
-                tr.innerHTML = `
-                    <td><a href="/token/${tokenMint}"><strong>${symbol}</strong><span class="token-name">${name}</span></a></td>
-                    <td><span class="score-badge">${score}</span></td>
-                    <td><span class="risk-badge ${riskClass}">${riskLevel}</span></td>
-                    <td>${creator ? `<span class="creator">@${creator}</span>` : '<span class="creator-muted">Unknown</span>'}</td>
-                    <td>${concentration ? concentration.toFixed(1) + '%' : '\u2014'}</td>
-                    <td>${walletAge !== null && walletAge >= 0 ? walletAge + 'd' : '\u2014'}</td>
-                    <td class="verdict-cell">${verdict}${verdictTruncated}</td>
-                    <td class="time-cell">${scoredAt}</td>
-                `;
-                tbody.appendChild(tr);
+                tbody.appendChild(buildTokenRowDom(token));
             });
         }
 
@@ -752,51 +812,7 @@
             }
             
             function createTokenRow(token) {
-                const riskClass = 'risk-' + (token.risk_level ? token.risk_level.toLowerCase() : 'unknown');
-                const symbol = token.symbol || '???';
-                const name = token.name || 'Unknown';
-                const score = token.risk_score || 0;
-                const riskLevel = token.risk_level || 'UNKNOWN';
-                const creator = token.creator_username;
-                const concentration = token.top_10_concentration;
-                const walletAge = token.wallet_age_days;
-                const verdict = (token.ai_verdict || '').substring(0, 60);
-                const verdictTruncated = (token.ai_verdict || '').length > 60 ? '...' : '';
-                const scoredAt = token.scored_at ? token.scored_at.substring(0, 16) : '—';
-                const tokenMint = token.token_mint || '';
-                
-                const tr = document.createElement('tr');
-                tr.className = riskClass + ' new-score-row';
-                tr.innerHTML = `
-                    <td>
-                        <a href="/token/${tokenMint}">
-                            <strong>${symbol}</strong>
-                            <span class="token-name">${name}</span>
-                        </a>
-                    </td>
-                    <td>
-                        <span class="score-badge">${score}</span>
-                    </td>
-                    <td>
-                        <span class="risk-badge ${riskClass}">${riskLevel}</span>
-                    </td>
-                    <td>
-                        ${creator ? `<span class="creator">@${creator}</span>` : '<span class="creator-muted">Unknown</span>'}
-                    </td>
-                    <td>
-                        ${concentration ? concentration.toFixed(1) + '%' : '—'}
-                    </td>
-                    <td>
-                        ${walletAge !== null && walletAge >= 0 ? walletAge + 'd' : '—'}
-                    </td>
-                    <td class="verdict-cell">
-                        ${verdict}${verdictTruncated}
-                    </td>
-                    <td class="time-cell">
-                        ${scoredAt}
-                    </td>
-                `;
-                return tr;
+                return buildTokenRowDom(token, 'new-score-row');
             }
             
             function addTokenToTable(token) {
