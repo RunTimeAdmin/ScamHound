@@ -41,6 +41,7 @@ from dashboard.routers.auth import create_auth_router
 from dashboard.routers.health import create_health_router
 from dashboard.routers.alerts import create_alerts_router
 from dashboard.routers.keys import create_keys_router
+from dashboard.routers.scores import create_scores_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -408,6 +409,15 @@ app.include_router(
         TIER_LIMITS,
     )
 )
+app.include_router(
+    create_scores_router(
+        lambda request: get_current_user(request),
+        lambda request: _verify_auth(request),
+        lambda request: _check_api_key(request),
+        lambda response, key_row: _add_rate_limit_headers(response, key_row),
+        logger,
+    )
+)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -536,7 +546,7 @@ async def widget(request: Request, token_mint: str):
     )
 
 
-@app.get("/api/scores")
+@app.get("/api/_legacy/scores")
 async def api_scores(
     request: Request,
     limit: int = 50,
@@ -1754,7 +1764,7 @@ async def list_api_keys(request: Request):
     return JSONResponse(content={"success": True, "keys": keys, "total": len(keys)})
 
 
-@app.delete("/api/scores/clear")
+@app.delete("/api/_legacy/scores/clear")
 async def clear_scores(request: Request):
     """Clear scan results. Admin clears all; regular user clears own."""
     request_id = getattr(request.state, "request_id", "")
