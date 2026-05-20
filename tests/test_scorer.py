@@ -77,3 +77,30 @@ def test_calculate_risk_score_marks_fallback_as_unscored():
     assert result["risk_score"] == 0
     assert result["risk_level"] == "UNSCORED"
     assert result["score_source"] == "fallback"
+
+
+def test_calculate_risk_score_sanitizes_age_and_unknown_data_claims():
+    """Contradictory maturity/unknown-data claims should be cleaned."""
+    llm_payload = (
+        '{"risk_score":65,"risk_level":"HIGH",'
+        '"verdict":"This token is brand new (0 minutes old). No immediate red flags.",'
+        '"top_risk_factors":['
+        '"Creator wallet age unknown",'
+        '"No BubbleMaps data available for cluster analysis",'
+        '"Very early stage with limited trading history",'
+        '"Low liquidity for age"'
+        '],'
+        '"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["token_age_minutes"] = 8 * 24 * 60
+    token_data["wallet_age_days"] = 45
+    token_data["bubblemaps"] = {"decentralization_score": 72}
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert "brand new" not in result["verdict"].lower()
+    assert "0 minutes old" not in result["verdict"].lower()
+    assert result["top_risk_factors"] == ["Low liquidity for age"]

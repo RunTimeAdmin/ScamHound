@@ -183,6 +183,68 @@ def _parse_llm_json_response(response_text: str) -> Dict[str, Any]:
     return json.loads(text)
 
 
+def _sanitize_verdict(verdict: str, token_data: Dict[str, Any]) -> str:
+    """Remove maturity claims that contradict computed token age."""
+    cleaned = (verdict or "").strip()
+    if not cleaned:
+        return "Analysis complete."
+
+    token_age_minutes = token_data.get("token_age_minutes")
+    if not isinstance(token_age_minutes, (int, float)):
+        return cleaned
+
+    lower = cleaned.lower()
+    contradicts_age = (
+        token_age_minutes >= 60
+        and (
+            "brand new" in lower
+            or "0 minutes old" in lower
+            or "very new token" in lower
+        )
+    )
+    if not contradicts_age:
+        return cleaned
+
+    age_hours = int(token_age_minutes // 60)
+    if age_hours >= 24:
+        age_label = f"{age_hours // 24} days"
+    else:
+        age_label = f"{age_hours} hours"
+
+    return (
+        f"Token age data indicates approximately {age_label} since launch. "
+        "Risk assessment is based on current holder, creator, and liquidity signals."
+    )
+
+
+def _sanitize_risk_factors(
+    factors: list[str], token_data: Dict[str, Any]
+) -> list[str]:
+    """Remove known non-risk or contradictory factors from model output."""
+    wallet_age_days = token_data.get("wallet_age_days")
+    token_age_minutes = token_data.get("token_age_minutes")
+    has_bubblemaps_data = (
+        token_data.get("bubblemaps", {}).get("decentralization_score") is not None
+    )
+
+    sanitized = []
+    for factor in factors:
+        text = factor.strip()
+        lower = text.lower()
+
+        if isinstance(wallet_age_days, (int, float)) and wallet_age_days >= 0:
+            if "wallet age unknown" in lower:
+                continue
+        if has_bubblemaps_data and "bubblemaps" in lower and "no" in lower:
+            continue
+        if isinstance(token_age_minutes, (int, float)) and token_age_minutes >= 60:
+            if "very early stage" in lower or "brand new" in lower:
+                continue
+
+        sanitized.append(text)
+    return sanitized[:5]
+
+
 
 SYSTEM_PROMPT = """You are ScamHound, an expert crypto security analyst specializing in rug pull detection on the Solana blockchain. You analyze token data and return a structured risk assessment.
 
@@ -427,12 +489,14 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
         normalized_level = _normalize_risk_level(
             result.get("risk_level"), normalized_score
         )
-        verdict = str(result.get("verdict", "Analysis complete.")).strip()
-        if not verdict:
-            verdict = "Analysis complete."
+        verdict = _sanitize_verdict(
+            str(result.get("verdict", "Analysis complete.")).strip(),
+            token_data,
+        )
         risk_factors = _normalize_string_list(
             result.get("top_risk_factors", []), max_items=5, max_item_length=200
         )
+        risk_factors = _sanitize_risk_factors(risk_factors, token_data)
         safe_signals = _normalize_string_list(
             result.get("top_safe_signals", []), max_items=5, max_item_length=200
         )
