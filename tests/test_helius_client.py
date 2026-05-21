@@ -49,65 +49,60 @@ def test_get_wallet_age_days_paginates_to_older_history():
     assert age_days >= 19
 
 
-def test_get_previous_token_launches_ignores_transfer_only_activity():
-    """Token transfers alone should not be treated as creator launches."""
-    transfer_only = [
+def test_get_previous_token_launches_uses_das_assets_by_creator():
+    """Launch counts should come from DAS getAssetsByCreator pagination."""
+    now = int(datetime.now(timezone.utc).timestamp())
+    page_1 = {
+        "items": [
+            {"id": f"asset-{i}", "created_at": now - 86400 - i}
+            for i in range(1000)
+        ]
+    }
+    page_2 = {
+        "items": [
+            {"id": "asset-c", "created_at": now - 259200},
+        ]
+    }
+
+    with patch.object(
+        helius_client,
+        "_make_rpc_request",
+        side_effect=[page_1, page_2],
+    ) as rpc_call:
+        result = helius_client.get_previous_token_launches("wallet-1")
+
+    assert result["prior_launch_count"] == 1000
+    assert result["abandoned_tokens"] == []
+    assert result["days_since_last_launch"] in (0, 1)
+    assert rpc_call.call_count == 2
+
+
+def test_creator_history_summary_uses_das_for_launch_counts():
+    """Creator summary should use DAS-backed launch counts, not tx guessing."""
+    txs = [
         {
-            "signature": "sig-a",
-            "type": "TRANSFER",
-            "feePayer": "wallet-1",
-            "tokenTransfers": [{"mint": "MintTouchedOnly"}],
+            "signature": "sig-1",
             "timestamp": int(datetime.now(timezone.utc).timestamp()),
         }
     ]
+    launches = {
+        "prior_launch_count": 5,
+        "abandoned_tokens": [],
+        "days_since_last_launch": 2,
+    }
 
     with patch.object(
-        helius_client,
-        "get_wallet_transaction_history",
-        side_effect=[transfer_only],
-    ):
-        result = helius_client.get_previous_token_launches("wallet-1")
+        helius_client, "get_wallet_transaction_history", return_value=txs
+    ) as tx_history:
+        with patch.object(
+            helius_client, "get_previous_token_launches", return_value=launches
+        ) as launch_lookup:
+            result = helius_client.get_creator_history_summary("wallet-1")
 
-    assert result["prior_launch_count"] == 0
-    assert result["abandoned_tokens"] == []
-
-
-def test_get_previous_token_launches_counts_only_creator_create_events():
-    """Only create-like transactions from the wallet should count as launches."""
-    now = datetime.now(timezone.utc)
-    create_events = [
-        {
-            "signature": "sig-1",
-            "type": "CREATE_TOKEN",
-            "feePayer": "wallet-1",
-            "tokenTransfers": [{"mint": "MintA"}],
-            "timestamp": int((now - timedelta(days=1)).timestamp()),
-        },
-        {
-            "signature": "sig-2",
-            "type": "CREATE_MINT",
-            "feePayer": "wallet-1",
-            "tokenTransfers": [{"mint": "MintB"}],
-            "timestamp": int((now - timedelta(days=2)).timestamp()),
-        },
-        {
-            "signature": "sig-3",
-            "type": "CREATE_TOKEN",
-            "feePayer": "other-wallet",
-            "tokenTransfers": [{"mint": "MintC"}],
-            "timestamp": int((now - timedelta(days=3)).timestamp()),
-        },
-    ]
-
-    with patch.object(
-        helius_client,
-        "get_wallet_transaction_history",
-        side_effect=[create_events],
-    ):
-        result = helius_client.get_previous_token_launches("wallet-1")
-
-    assert result["prior_launch_count"] == 1
-    assert result["days_since_last_launch"] in (0, 1)
+    assert result["prior_launch_count"] == 5
+    assert result["days_since_last_launch"] == 2
+    assert tx_history.call_count == 1
+    launch_lookup.assert_called_once_with("wallet-1")
 
 
 def test_get_token_holders_does_not_fabricate_total_holder_count():
@@ -150,6 +145,8 @@ def test_analyze_creator_wallet_fetches_history_once():
             "timestamp": int(datetime.now(timezone.utc).timestamp()),
         }
     ]
+
+    helius_client._CREATOR_HISTORY_CACHE.clear()
 
     with patch.object(
         helius_client,

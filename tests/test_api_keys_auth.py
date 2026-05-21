@@ -22,22 +22,33 @@ def test_generate_api_key_requires_authenticated_session(fastapi_test_client):
     assert "Authentication required" in payload["error"]
 
 
-def test_generate_api_key_rejects_cross_account_for_non_admin(
+def test_generate_api_key_ignores_requested_cross_account_email(
     fastapi_test_client,
 ):
-    """Non-admin users cannot generate API keys for another email."""
+    """Endpoint should ignore requested email and bind to session user."""
     fake_user = {"id": 7, "email": "owner@example.com", "is_admin": False}
 
     with patch("dashboard.app.get_current_user", return_value=fake_user):
-        response = fastapi_test_client.post(
-            "/api/keys/generate",
-            json={"email": "victim@example.com", "name": "bad-attempt"},
-        )
+        with patch("engine.database.get_api_keys_by_email", return_value=[]):
+            with patch(
+                "engine.database.create_api_key",
+                return_value={
+                    "key": "sh_456",
+                    "key_prefix": "sh_456",
+                    "email": "owner@example.com",
+                    "tier": "free",
+                    "name": "bound",
+                    "created_at": "2026-05-20T00:00:00Z",
+                },
+            ):
+                response = fastapi_test_client.post(
+                    "/api/keys/generate",
+                    json={"email": "victim@example.com", "name": "bad-attempt"},
+                )
 
-    assert response.status_code == 403
+    assert response.status_code == 200
     payload = response.json()
-    assert payload["success"] is False
-    assert "another user" in payload["error"]
+    assert payload["success"] is True
 
 
 def test_generate_api_key_defaults_to_authenticated_user_email(
@@ -110,3 +121,39 @@ def test_global_watchlist_allows_legacy_admin_token_fallback(
     assert create_resp.json()["success"] is True
     assert list_resp.status_code == 200
     assert delete_resp.status_code == 200
+
+
+def test_admin_endpoints_fail_closed_when_admin_token_missing(fastapi_test_client):
+    """Admin-token endpoints must reject requests when token is unset."""
+    with patch.dict("os.environ", {"SCAMHOUND_ADMIN_TOKEN": ""}, clear=False):
+        response = fastapi_test_client.get("/api/keys/admin/list")
+
+    assert response.status_code == 401
+
+
+def test_key_generation_endpoint_is_rate_limited(fastapi_test_client):
+    """Key generation should throttle repeated attempts per client IP."""
+    from dashboard.routers import keys as keys_router
+
+    keys_router._key_gen_attempts_by_ip.clear()
+    with patch.object(keys_router, "_KEY_GEN_MAX_ATTEMPTS", 2):
+        with patch("dashboard.app.get_current_user", return_value={"id": 1, "email": "user@example.com", "is_admin": False}):
+            with patch("engine.database.get_api_keys_by_email", return_value=[]):
+                with patch(
+                    "engine.database.create_api_key",
+                    return_value={
+                        "key": "sh_abc",
+                        "key_prefix": "sh_abc",
+                        "email": "user@example.com",
+                        "tier": "free",
+                        "name": "",
+                        "created_at": "2026-05-20T00:00:00Z",
+                    },
+                ):
+                    first = fastapi_test_client.post("/api/keys/generate", json={})
+                    second = fastapi_test_client.post("/api/keys/generate", json={})
+                    third = fastapi_test_client.post("/api/keys/generate", json={})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429

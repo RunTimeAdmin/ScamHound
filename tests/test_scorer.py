@@ -138,6 +138,20 @@ def test_parse_llm_json_response_handles_extra_braces_in_trailing_noise():
     assert result["risk_level"] == "MEDIUM"
 
 
+def test_build_user_prompt_marks_unknown_total_holders_when_missing():
+    """Prompt should not fabricate total holder count when unknown."""
+    token_data = _sample_token_data()
+    token_data["holders"] = {
+        "top_holders": [],
+        "top_10_concentration_pct": 10.0,
+        "total_holder_count": None,
+    }
+
+    prompt = scorer.build_user_prompt(token_data)
+
+    assert "Total holders: Unknown (top-holder sample only)" in prompt
+
+
 def test_call_llm_uses_configured_provider():
     """Provider routing should honor config-backed LLM_PROVIDER."""
     with patch.object(scorer, "get_config", return_value="deepseek"):

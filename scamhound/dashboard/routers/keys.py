@@ -2,14 +2,42 @@
 API key management endpoints.
 """
 
+import logging
+import time
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from engine import database
 
+logger = logging.getLogger(__name__)
+
+_KEY_GEN_WINDOW_SECONDS = 3600
+_KEY_GEN_MAX_ATTEMPTS = 5
+_key_gen_attempts_by_ip: dict[str, list[float]] = {}
+
+
+def _allow_key_generation_attempt(client_ip: str) -> tuple[bool, int]:
+    """Simple in-memory throttle for key generation attempts per client IP."""
+    now = time.time()
+    attempts = _key_gen_attempts_by_ip.get(client_ip, [])
+    attempts = [ts for ts in attempts if now - ts < _KEY_GEN_WINDOW_SECONDS]
+    if len(attempts) >= _KEY_GEN_MAX_ATTEMPTS:
+        _key_gen_attempts_by_ip[client_ip] = attempts
+        oldest = min(attempts)
+        retry_after = int(_KEY_GEN_WINDOW_SECONDS - (now - oldest)) + 1
+        return False, max(1, retry_after)
+
+    attempts.append(now)
+    _key_gen_attempts_by_ip[client_ip] = attempts
+    return True, 0
+
 
 def create_keys_router(
-    get_current_user_fn, verify_auth_fn, tier_limits
+    get_current_user_fn,
+    verify_auth_fn,
+    tier_limits,
+    get_client_ip_fn,
 ) -> APIRouter:
     """Create API key management router."""
     router = APIRouter()
@@ -17,8 +45,24 @@ def create_keys_router(
     @router.post("/api/keys/generate")
     async def generate_api_key(request: Request):
         """Generate a new free-tier API key for the authenticated user."""
+        client_ip = get_client_ip_fn(request)
+        allowed, retry_after = _allow_key_generation_attempt(client_ip)
+        if not allowed:
+            logger.warning(
+                "[KEYS] Key generation rate limited for ip=%s", client_ip
+            )
+            return JSONResponse(
+                content={
+                    "success": False,
+                    "error": "Too many key generation attempts. Try again later.",
+                },
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+
         user = get_current_user_fn(request)
         if not user:
+            logger.warning("[KEYS] Unauthorized key generation attempt ip=%s", client_ip)
             return JSONResponse(
                 content={"success": False, "error": "Authentication required"},
                 status_code=401,
@@ -39,28 +83,15 @@ def create_keys_router(
             )
 
         user_email = str(user.get("email", "")).strip().lower()
-        requested_email = str(body.get("email", "")).strip().lower()
         name = body.get("name", "").strip()
 
-        email = requested_email or user_email
+        # Always bind generated keys to the authenticated session email.
+        # This prevents fake/catch-all email abuse.
+        email = user_email
         if not email or "@" not in email:
             return JSONResponse(
                 content={"success": False, "error": "Valid email required"},
                 status_code=400,
-            )
-
-        # Non-admin users can only generate keys for their own account.
-        if (
-            requested_email
-            and requested_email != user_email
-            and not user.get("is_admin")
-        ):
-            return JSONResponse(
-                content={
-                    "success": False,
-                    "error": "Cannot generate keys for another user",
-                },
-                status_code=403,
             )
 
         # Limit: max 3 free keys per email
@@ -79,6 +110,12 @@ def create_keys_router(
             )
 
         result = database.create_api_key(email=email, tier="free", name=name)
+        logger.info(
+            "[KEYS] Generated API key prefix=%s email=%s ip=%s",
+            result["key_prefix"],
+            email,
+            client_ip,
+        )
         daily_limit = tier_limits.get("free", 100)
 
         return JSONResponse(

@@ -254,7 +254,7 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     Note: Birdeye API limit must be 1-50 for /defi/txs/token endpoint.
     
     Returns:
-    - two_sided_trader_ratio: float 0.0-1.0
+    - two_sided_trader_activity_ratio: float 0.0-1.0
     - large_sell_pressure: bool
     - avg_trade_size_usd: float
     - unique_trader_count: int
@@ -322,6 +322,7 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     avg_trade_size = total_volume / len(trades) if trades else 0
     
     return {
+        "two_sided_trader_activity_ratio": round(two_sided_ratio, 2),
         "two_sided_trader_ratio": round(two_sided_ratio, 2),
         # Backward-compatible alias retained for existing consumers.
         "wash_trading_score": round(two_sided_ratio, 2),

@@ -151,23 +151,34 @@ def _check_rate_limit(ip: str) -> tuple[bool, int, int]:
 
 def _verify_auth(request: Request) -> bool:
     """
-    Verify authentication token via Authorization: Bearer header only.
-    Returns True if authorized, False otherwise.
-    If SCAMHOUND_ADMIN_TOKEN is not set, allows access (dev mode).
+    Verify admin token auth via Authorization: Bearer header only.
+    Returns True when token matches, False otherwise.
     """
     expected_token = os.environ.get("SCAMHOUND_ADMIN_TOKEN", "")
-    
-    # Dev mode: no token configured, allow access
+
+    # Fail closed if admin token is not configured.
     if not expected_token:
-        return True
-    
+        logger.error(
+            "[AUTH] SCAMHOUND_ADMIN_TOKEN missing; admin-token auth disabled"
+        )
+        return False
+
     # Check Bearer header
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         provided_token = auth_header[7:]  # Remove "Bearer " prefix
         if provided_token == expected_token:
             return True
-    
+        logger.warning(
+            "[AUTH] Invalid admin token from ip=%s",
+            _get_client_ip(request),
+        )
+    else:
+        logger.warning(
+            "[AUTH] Missing Bearer token on admin endpoint ip=%s",
+            _get_client_ip(request),
+        )
+
     return False
 
 
@@ -429,8 +440,9 @@ app.include_router(create_alerts_router(lambda request: get_current_user(request
 app.include_router(
     create_keys_router(
         lambda request: get_current_user(request),
-        lambda request: _verify_auth(request),
+        lambda request: _is_admin_authenticated(request),
         TIER_LIMITS,
+        lambda request: _get_client_ip(request),
     )
 )
 app.include_router(

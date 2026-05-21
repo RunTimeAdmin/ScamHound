@@ -318,7 +318,7 @@ Key risk factors to weigh heavily (adjusted for token age):
 - Any prior rug pulls from wallet = critical (ALWAYS matters)
 - Holder wallet clustering score >0.6 = critical, >0.4 = high (ALWAYS matters - creator controlling multiple wallets is suspicious even for new tokens)
 - Liquidity/MCap ratio <0.05 = critical, <0.10 = high (ONLY if token > 1 hour old)
-- Two-sided trader ratio >0.7 = critical, >0.5 = high (heuristic only; not definitive wash-trading proof)
+- Two-sided trader activity ratio >0.7 = critical, >0.5 = high (heuristic signal only; not definitive manipulation proof)
 - Large sell pressure = high
 - Creator royalty >5% = medium concern
 - BubbleMaps decentralization score <30 = critical, <50 = high (indicates centralized control)
@@ -368,7 +368,7 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     holders = token_data.get("holders", {})
     top_holders = holders.get("top_holders", [])
     top_10_concentration = holders.get("top_10_concentration_pct", 0)
-    total_holders = holders.get("total_holder_count", 0)
+    total_holders = holders.get("total_holder_count")
     top1_pct = holders.get("top1_pct", 0)
     top5_pct = holders.get("top5_pct", 0)
     concentration_score = holders.get("concentration_score", "unknown")
@@ -386,8 +386,8 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     liquidity_ratio = token_data.get("liquidity_to_mcap_ratio", 0)
     unique_traders = token_data.get("unique_trader_count", 0)
     two_sided_ratio = token_data.get(
-        "two_sided_trader_ratio",
-        token_data.get("wash_trading_score", 0),
+        "two_sided_trader_activity_ratio",
+        token_data.get("two_sided_trader_ratio", 0),
     )
     large_sell = token_data.get("large_sell_pressure", False)
     lifetime_fees = token_data.get("lifetime_fees_sol", 0)
@@ -414,11 +414,9 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
         age_str = "Unknown"
     
     # Pre-compute warning strings (Python 3.10 doesn't allow complex expressions in f-strings)
-    holder_count_text = (
-        str(total_holders)
-        if total_holders is not None
-        else "Unknown (top-holder sample only)"
-    )
+    holder_count_text = "Unknown (top-holder sample only)"
+    if isinstance(total_holders, (int, float)) and total_holders >= 0:
+        holder_count_text = str(int(total_holders))
     new_wallet_warning = "(NEW WALLET - HIGH RISK)" if 0 <= wallet_age < 7 else ""
     abandoned_count = len(abandoned)
     abandoned_warning = "(RUG HISTORY DETECTED)" if abandoned else ""
@@ -433,7 +431,7 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
         pumpfun_note = ("\nIMPORTANT: This is a pump.fun token. High initial holder concentration is "
                         "expected due to the bonding curve mechanism and does NOT indicate rug pull risk "
                         "by itself. Focus on other risk signals (creator history, wallet clustering, "
-                        "two-sided trader behavior).")
+                        "two-sided trader activity).")
         if bonding_curve_excluded:
             pumpfun_note += ("\nThe bonding curve address has been excluded from holder concentration "
                             "analysis. The percentages shown reflect real wallet distribution only.")
@@ -490,7 +488,7 @@ MARKET DATA (Birdeye):
 - Liquidity (USD): ${liquidity_usd:,.2f}
 - Liquidity to market cap ratio: {liquidity_ratio}
 - Unique traders (24h): {unique_traders}
-- Two-sided trader ratio (0.0-1.0, heuristic): {two_sided_ratio}
+- Two-sided trader activity ratio (0.0-1.0, heuristic): {two_sided_ratio}
 - Large sell pressure detected: {large_sell}
 
 Respond with JSON only."""

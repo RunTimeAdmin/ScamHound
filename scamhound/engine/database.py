@@ -1032,6 +1032,7 @@ def increment_api_key_usage(key_id: int, endpoint: str, status_code: int = 200, 
 
     conn = get_connection()
     try:
+        conn.execute("BEGIN IMMEDIATE")
         # Check if we need to reset daily counter
         row = conn.execute(
             "SELECT last_reset_date FROM api_keys WHERE id = ?", (key_id,)

@@ -24,5 +24,6 @@ def test_get_trade_history_returns_two_sided_ratio_and_legacy_alias():
 
     assert result is not None
     assert result["unique_trader_count"] == 2
+    assert result["two_sided_trader_activity_ratio"] == 0.5
     assert result["two_sided_trader_ratio"] == 0.5
     assert result["wash_trading_score"] == result["two_sided_trader_ratio"]

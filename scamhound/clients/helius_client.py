@@ -77,6 +77,36 @@ def _fetch_creator_transactions(
     return collected
 
 
+def _make_rpc_request(method: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Make a JSON-RPC request against the Helius mainnet RPC endpoint."""
+    api_key = os.environ.get("HELIUS_API_KEY", "")
+    if not api_key:
+        logger.error("[HELIUS] API key not configured")
+        return None
+
+    url = f"{RPC_URL}/?api-key={api_key}"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": f"helius-{method}",
+        "method": method,
+        "params": params,
+    }
+    try:
+        response = request_with_retry(
+            requests.post, url, json=payload, timeout=30
+        )
+        response.raise_for_status()
+        body = response.json()
+    except requests.exceptions.RequestException as exc:
+        logger.error(f"[HELIUS] RPC request failed ({method}): {exc}")
+        return None
+
+    if "error" in body:
+        logger.error(f"[HELIUS] RPC error ({method}): {body['error']}")
+        return None
+    return body.get("result") if isinstance(body, dict) else None
+
+
 def _derive_wallet_age_days(transactions: List[Dict[str, Any]]) -> int:
     """Derive wallet age from fetched transactions."""
     oldest_timestamp: Optional[datetime] = None
@@ -143,7 +173,7 @@ def _derive_previous_token_launches(
 
 
 def get_creator_history_summary(
-    wallet_address: str, max_pages: int = 5
+    wallet_address: str, max_pages: int = 20
 ) -> Dict[str, Any]:
     """Get creator age + launch history from one transaction fetch (cached)."""
     now = datetime.now(timezone.utc).timestamp()
@@ -153,7 +183,7 @@ def get_creator_history_summary(
 
     transactions = _fetch_creator_transactions(wallet_address, max_pages=max_pages)
     age_days = _derive_wallet_age_days(transactions)
-    launches = _derive_previous_token_launches(wallet_address, transactions)
+    launches = get_previous_token_launches(wallet_address)
     data = {
         "wallet_age_days": age_days,
         "prior_launch_count": launches["prior_launch_count"],
@@ -210,7 +240,7 @@ def get_wallet_transaction_history(
     return result
 
 
-def get_wallet_age_days(wallet_address: str, max_pages: int = 5) -> int:
+def get_wallet_age_days(wallet_address: str, max_pages: int = 20) -> int:
     """
     Get the age of a wallet in days since first transaction.
     
@@ -231,8 +261,50 @@ def get_previous_token_launches(wallet_address: str) -> Dict[str, Any]:
     - abandoned_tokens: list of token mints where liquidity was removed
     - days_since_last_launch: int (None if first launch)
     """
-    transactions = _fetch_creator_transactions(wallet_address, max_pages=3)
-    return _derive_previous_token_launches(wallet_address, transactions)
+    page = 1
+    limit = 1000
+    total_assets = 0
+    newest_timestamp: Optional[int] = None
+
+    while True:
+        result = _make_rpc_request(
+            "getAssetsByCreator",
+            {
+                "creatorAddress": wallet_address,
+                "page": page,
+                "limit": limit,
+            },
+        )
+        if not result:
+            break
+
+        items = result.get("items") if isinstance(result, dict) else None
+        if not isinstance(items, list) or not items:
+            break
+
+        total_assets += len(items)
+        for asset in items:
+            if not isinstance(asset, dict):
+                continue
+            created_at = asset.get("created_at")
+            if isinstance(created_at, int):
+                if newest_timestamp is None or created_at > newest_timestamp:
+                    newest_timestamp = created_at
+
+        if len(items) < limit:
+            break
+        page += 1
+
+    days_since_last_launch: Optional[int] = None
+    if newest_timestamp is not None:
+        launch_dt = datetime.fromtimestamp(newest_timestamp, tz=timezone.utc)
+        days_since_last_launch = max(0, (datetime.now(timezone.utc) - launch_dt).days)
+
+    return {
+        "prior_launch_count": max(0, total_assets - 1),
+        "abandoned_tokens": [],
+        "days_since_last_launch": days_since_last_launch,
+    }
 
 
 def _find_wallet_funding_source(wallet: str) -> Optional[str]:
@@ -480,7 +552,7 @@ def analyze_creator_wallet(wallet_address: str) -> Dict[str, Any]:
     
     Combines age, prior launches, and behavioral patterns.
     """
-    summary = get_creator_history_summary(wallet_address, max_pages=5)
+    summary = get_creator_history_summary(wallet_address)
     age = summary["wallet_age_days"]
 
     return {
