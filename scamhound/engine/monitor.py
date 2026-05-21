@@ -20,6 +20,7 @@ from clients import bubblemaps_client
 from clients import dexscreener_client
 from clients import domain_age_client
 from clients import geckoterminal_client
+from clients import gmgn_client
 from clients import jupiter_client
 from clients import pumpfun_client
 from clients import platform_router
@@ -388,6 +389,23 @@ async def _async_get_geckoterminal_fallback(
         return None
 
 
+async def _async_get_gmgn_fallback(
+    token_mint: str,
+) -> Optional[Dict[str, Any]]:
+    """Async wrapper for optional GMGN token info/security fallback."""
+    try:
+        return await asyncio.to_thread(
+            gmgn_client.get_token_information_fallback,
+            token_mint,
+        )
+    except Exception as e:
+        logger.warning(
+            f"[SCAMHOUND] Could not get GMGN fallback for "
+            f"{token_mint[:8]}...: {e}"
+        )
+        return None
+
+
 async def _async_simulate_honeypot(token_mint: str) -> Optional[Dict[str, Any]]:
     """Async wrapper for Jupiter round-trip honeypot check."""
     try:
@@ -610,6 +628,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         market_task = _async_get_market_data(token_mint)
         honeypot_task = _async_simulate_honeypot(token_mint)
         dexscreener_task = _async_get_dexscreener_signals(token_mint)
+        gmgn_task = _async_get_gmgn_fallback(token_mint)
         
         (
             holder_data,
@@ -618,6 +637,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             market_data,
             honeypot_data,
             dexscreener_data,
+            gmgn_data,
         ) = (
             await asyncio.gather(
                 holder_task,
@@ -626,6 +646,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                 market_task,
                 honeypot_task,
                 dexscreener_task,
+                gmgn_task,
                 return_exceptions=True,
             )
         )
@@ -826,6 +847,95 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                             }
                         )
                         token_data["lp_controls"] = lp_controls
+
+        if gmgn_data and not isinstance(gmgn_data, Exception):
+            token_data["gmgn_checked"] = bool(gmgn_data.get("checked", False))
+            token_data["gmgn_info_available"] = bool(
+                gmgn_data.get("info_available", False)
+            )
+            token_data["gmgn_security_available"] = bool(
+                gmgn_data.get("security_available", False)
+            )
+            token_data["gmgn_rug_ratio"] = float(gmgn_data.get("rug_ratio", 0) or 0)
+            token_data["gmgn_is_wash_trading"] = bool(
+                gmgn_data.get("is_wash_trading", False)
+            )
+            token_data["gmgn_bundler_ratio"] = float(
+                gmgn_data.get("bundler_ratio", 0) or 0
+            )
+            token_data["gmgn_phishing_ratio"] = float(
+                gmgn_data.get("phishing_ratio", 0) or 0
+            )
+
+            if not token_data.get("name") or token_data.get("name") == "Unknown":
+                gmgn_name = gmgn_data.get("name")
+                if gmgn_name:
+                    token_data["name"] = gmgn_name
+            if (
+                not token_data.get("symbol")
+                or token_data.get("symbol") == "UNKNOWN"
+            ):
+                gmgn_symbol = gmgn_data.get("symbol")
+                if gmgn_symbol:
+                    token_data["symbol"] = gmgn_symbol
+            if not token_data.get("creator", {}).get("wallet"):
+                creator_wallet = gmgn_data.get("creator_wallet")
+                if creator_wallet:
+                    token_data["creator"] = {
+                        "wallet": creator_wallet,
+                        "username": "gmgn",
+                        "royalty_pct": 0.0,
+                    }
+            if not token_data.get("created_at") and gmgn_data.get("created_at"):
+                token_data["created_at"] = gmgn_data.get("created_at")
+            if float(token_data.get("liquidity_usd", 0) or 0) <= 0:
+                gmgn_liquidity = float(gmgn_data.get("liquidity_usd", 0) or 0)
+                if gmgn_liquidity > 0:
+                    token_data["liquidity_usd"] = gmgn_liquidity
+                    token_data["liquidity_source"] = "gmgn_fallback"
+            if float(token_data.get("liquidity_to_mcap_ratio", 0) or 0) <= 0:
+                gmgn_ratio = float(
+                    gmgn_data.get("liquidity_to_mcap_ratio", 0) or 0
+                )
+                if gmgn_ratio > 0:
+                    token_data["liquidity_to_mcap_ratio"] = gmgn_ratio
+            gmgn_buys = int(gmgn_data.get("buy_count_24h", 0) or 0)
+            gmgn_sells = int(gmgn_data.get("sell_count_24h", 0) or 0)
+            if (
+                int(token_data.get("buy_count", 0) or 0) == 0
+                and int(token_data.get("sell_count", 0) or 0) == 0
+                and (gmgn_buys + gmgn_sells) > 0
+            ):
+                token_data["buy_count"] = gmgn_buys
+                token_data["sell_count"] = gmgn_sells
+                token_data["trade_activity_source"] = "gmgn_fallback"
+                if int(token_data.get("unique_trader_count", 0) or 0) <= 0:
+                    token_data["unique_trader_count"] = gmgn_buys + gmgn_sells
+            gmgn_holder_count = int(gmgn_data.get("holder_count", 0) or 0)
+            if gmgn_holder_count > 0:
+                existing_holders = token_data.get("holders") or {}
+                if int(existing_holders.get("total_holder_count", 0) or 0) <= 0:
+                    existing_holders["total_holder_count"] = gmgn_holder_count
+                gmgn_top10 = float(gmgn_data.get("top_10_holder_pct", 0) or 0)
+                if gmgn_top10 > 0 and float(
+                    existing_holders.get("top_10_concentration_pct", 0) or 0
+                ) <= 0:
+                    existing_holders["top_10_concentration_pct"] = gmgn_top10
+                token_data["holders"] = existing_holders
+            if (
+                gmgn_data.get("mint_authority_renounced") is not None
+                or gmgn_data.get("freeze_authority_renounced") is not None
+            ):
+                existing_security = token_data.get("security") or {}
+                if existing_security.get("mint_authority_renounced") is None:
+                    existing_security["mint_authority_renounced"] = gmgn_data.get(
+                        "mint_authority_renounced"
+                    )
+                if existing_security.get("freeze_authority_renounced") is None:
+                    existing_security["freeze_authority_renounced"] = gmgn_data.get(
+                        "freeze_authority_renounced"
+                    )
+                token_data["security"] = existing_security
 
         gecko_data = None
         needs_gecko_fallback = (

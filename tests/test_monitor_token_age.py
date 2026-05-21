@@ -1009,3 +1009,156 @@ def test_scan_single_token_propagates_jupiter_route_diagnostics():
     assert result is not None
     assert result["jupiter_total_price_impact_pct"] == 2.7
     assert result["jupiter_route_complexity"] == "multi_hop"
+
+
+def test_scan_single_token_uses_gmgn_fallback_when_other_sources_empty():
+    """GMGN fallback should populate trade and liquidity fields when missing."""
+    token_mint = "11111111111111111111111111111120"
+    fake_score = {
+        "token_mint": token_mint,
+        "name": "Token",
+        "symbol": "TKN",
+        "risk_score": 48,
+        "risk_level": "MEDIUM",
+        "verdict": "ok",
+        "top_risk_factors": [],
+        "top_safe_signals": [],
+    }
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("engine.monitor.database.token_already_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.was_recently_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bags_profile",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_market_data",
+                new=AsyncMock(
+                    return_value={
+                        "overview": {},
+                        "liquidity": {"liquidity_usd": 0},
+                        "trades": {
+                            "buy_count": 0,
+                            "sell_count": 0,
+                            "unique_trader_count": 0,
+                        },
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_holder_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_token_security_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bubblemaps_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_simulate_honeypot",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_gmgn_fallback",
+                new=AsyncMock(
+                    return_value={
+                        "checked": True,
+                        "info_available": True,
+                        "security_available": True,
+                        "name": "Pain",
+                        "symbol": "PAIN",
+                        "creator_wallet": (
+                            "CreatorWallet11111111111111111111111111"
+                        ),
+                        "created_at": 1716000000,
+                        "liquidity_usd": 88888.0,
+                        "liquidity_to_mcap_ratio": 0.21,
+                        "buy_count_24h": 15,
+                        "sell_count_24h": 9,
+                        "holder_count": 444,
+                        "top_10_holder_pct": 24.5,
+                        "rug_ratio": 0.12,
+                        "is_wash_trading": False,
+                        "bundler_ratio": 0.33,
+                        "phishing_ratio": 0.22,
+                        "mint_authority_renounced": True,
+                        "freeze_authority_renounced": True,
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_analyze_creator",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor.scorer.calculate_risk_score",
+                side_effect=lambda token_data: {
+                    **fake_score,
+                    "name": token_data.get("name"),
+                    "symbol": token_data.get("symbol"),
+                    "liquidity_usd": token_data.get("liquidity_usd"),
+                    "buy_count": token_data.get("buy_count"),
+                    "sell_count": token_data.get("sell_count"),
+                    "trade_activity_source": token_data.get("trade_activity_source"),
+                    "gmgn_checked": token_data.get("gmgn_checked"),
+                    "gmgn_bundler_ratio": token_data.get("gmgn_bundler_ratio"),
+                    "gmgn_phishing_ratio": token_data.get("gmgn_phishing_ratio"),
+                },
+            )
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.is_watched_wallet", return_value=False)
+        )
+        stack.enter_context(patch("engine.monitor.database.save_score"))
+        stack.enter_context(patch("engine.monitor._mark_processed"))
+        stack.enter_context(patch("engine.monitor._notify_new_score"))
+
+        result = monitor.scan_single_token(token_mint, skip_if_scored=False)
+
+    assert result is not None
+    assert result["name"] == "Pain"
+    assert result["symbol"] == "PAIN"
+    assert result["liquidity_usd"] == 88888.0
+    assert result["buy_count"] == 15
+    assert result["sell_count"] == 9
+    assert result["trade_activity_source"] == "gmgn_fallback"
+    assert result["gmgn_checked"] is True
+    assert result["gmgn_bundler_ratio"] == 0.33
+    assert result["gmgn_phishing_ratio"] == 0.22

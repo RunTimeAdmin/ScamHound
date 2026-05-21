@@ -637,3 +637,28 @@ def test_calculate_risk_score_applies_high_holder_concentration_weight():
         "holder concentration is high" in factor.lower()
         for factor in result["top_risk_factors"]
     )
+
+
+def test_calculate_risk_score_weights_gmgn_phishing_and_bundlers():
+    """GMGN phishing + bundler ratios should add deterministic risk."""
+    llm_payload = (
+        '{"risk_score":28,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["gmgn_bundler_ratio"] = 0.32
+    token_data["gmgn_phishing_ratio"] = 0.21
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 50
+    assert any(
+        "bundler concentration" in factor.lower()
+        for factor in result["top_risk_factors"]
+    )
+    assert any(
+        "phishing-style" in factor.lower()
+        for factor in result["top_risk_factors"]
+    )

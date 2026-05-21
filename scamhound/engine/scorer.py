@@ -358,8 +358,14 @@ def _apply_due_diligence_guard(
         dexscreener_activity = int(
             token_data.get("dexscreener_txns_h24_total", 0) or 0
         )
+        gmgn_activity = int(token_data.get("buy_count", 0) or 0) + int(
+            token_data.get("sell_count", 0) or 0
+        )
         has_activity_fallback = (
-            buys > 0 or sells > 0 or dexscreener_activity > 0
+            buys > 0
+            or sells > 0
+            or dexscreener_activity > 0
+            or gmgn_activity > 0
         )
         if (
             not isinstance(unique_traders, (int, float)) or unique_traders <= 0
@@ -595,6 +601,47 @@ def _apply_security_control_weights(
         enforced_factors.append(
             "DexScreener warning labels indicate elevated trust risk."
         )
+    gmgn_rug_ratio = token_data.get("gmgn_rug_ratio")
+    if isinstance(gmgn_rug_ratio, (int, float)):
+        if gmgn_rug_ratio >= 0.3:
+            additions += 15
+            enforced_factors.append(
+                "GMGN security model reports elevated rug ratio (>0.30)."
+            )
+        elif gmgn_rug_ratio >= 0.1:
+            additions += 8
+            enforced_factors.append(
+                "GMGN security model reports moderate rug ratio (>0.10)."
+            )
+    if bool(token_data.get("gmgn_is_wash_trading")):
+        additions += 12
+        enforced_factors.append(
+            "GMGN reports potential wash-trading behavior."
+        )
+    gmgn_bundler_ratio = token_data.get("gmgn_bundler_ratio")
+    if isinstance(gmgn_bundler_ratio, (int, float)):
+        if gmgn_bundler_ratio >= 0.30:
+            additions += 15
+            enforced_factors.append(
+                "GMGN shows high bundler concentration in trading flow."
+            )
+        elif gmgn_bundler_ratio >= 0.15:
+            additions += 8
+            enforced_factors.append(
+                "GMGN shows moderate bundler concentration in flow."
+            )
+    gmgn_phishing_ratio = token_data.get("gmgn_phishing_ratio")
+    if isinstance(gmgn_phishing_ratio, (int, float)):
+        if gmgn_phishing_ratio >= 0.30:
+            additions += 18
+            enforced_factors.append(
+                "GMGN flags elevated entrapment/phishing-style trader ratio."
+            )
+        elif gmgn_phishing_ratio >= 0.15:
+            additions += 10
+            enforced_factors.append(
+                "GMGN flags moderate entrapment/phishing-style activity."
+            )
     domain_age_days = token_data.get("domain_age_days")
     if isinstance(domain_age_days, int):
         if domain_age_days < 30:
@@ -836,6 +883,13 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     supply_burn_checked = token_data.get("supply_burn_checked")
     supply_burn_share_pct = token_data.get("supply_burn_share_pct")
     supply_burn_meaningful = token_data.get("supply_burn_meaningful")
+    gmgn_checked = token_data.get("gmgn_checked")
+    gmgn_info_available = token_data.get("gmgn_info_available")
+    gmgn_security_available = token_data.get("gmgn_security_available")
+    gmgn_rug_ratio = token_data.get("gmgn_rug_ratio")
+    gmgn_is_wash_trading = token_data.get("gmgn_is_wash_trading")
+    gmgn_bundler_ratio = token_data.get("gmgn_bundler_ratio")
+    gmgn_phishing_ratio = token_data.get("gmgn_phishing_ratio")
 
     # Token security controls
     security = token_data.get("security", {})
@@ -1008,6 +1062,13 @@ MARKET DATA (Birdeye):
 - Supply burn checked: {supply_burn_checked}
 - Supply burn share percent: {supply_burn_share_pct}
 - Supply burn meaningful signal: {supply_burn_meaningful}
+- GMGN checked: {gmgn_checked}
+- GMGN info available: {gmgn_info_available}
+- GMGN security available: {gmgn_security_available}
+- GMGN rug ratio: {gmgn_rug_ratio}
+- GMGN wash-trading flag: {gmgn_is_wash_trading}
+- GMGN bundler ratio: {gmgn_bundler_ratio}
+- GMGN phishing/entrapment ratio: {gmgn_phishing_ratio}
 
 TOKEN SECURITY CONTROLS (On-chain):
 - Mint authority renounced: {mint_authority_renounced}

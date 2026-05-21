@@ -375,6 +375,22 @@
                     </td>
                 </tr>
                 <tr>
+                    <td>Genesis Funding Cluster Detection</td>
+                    <td>
+                        {% if token.genesis_cluster_suspected is none %}
+                        Unknown
+                        {% elif token.genesis_cluster_suspected %}
+                        Suspected <span class="warning-text">⚠️ Coordinated Funding Cluster</span>
+                        {% else %}
+                        Not detected
+                        {% endif %}
+                        {% if token.largest_funding_cluster_wallets is not none %}
+                        (wallets={{ token.largest_funding_cluster_wallets }},
+                        supply={{ token.largest_funding_cluster_supply_pct or 0 }}%)
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
                     <td>DexScreener Trust/Warning Labels</td>
                     <td>
                         {% if token.dexscreener_checked %}
