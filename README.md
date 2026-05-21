@@ -48,11 +48,22 @@ Configuration is read from `.env` and optionally overridden by `scamhound/config
 | `LLM_PROVIDER` | `anthropic` | AI provider: "anthropic" or "deepseek" |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic model name override |
 | `DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek model name override |
+| `LLM_MAX_RETRIES` | `2` | Retries before fallback `UNSCORED` |
+| `LLM_RETRY_BACKOFF_SECONDS` | `1.0` | Base backoff between LLM retry attempts |
 | `AUTO_SCAN_ENABLED` | `false` | Enable background auto-polling for new tokens |
 | `POLL_INTERVAL_SECONDS` | `60` | Seconds between auto-scan cycles |
 | `PUMPFUN_ENABLED` | `false` | Enable pump.fun token feed (`ENABLE_PUMPFUN` also accepted) |
 | `RISK_ALERT_THRESHOLD` | `65` | Minimum risk score to trigger alerts |
+| `SCAMHOUND_SOAK_MODE` | `false` | Disable API usage charging during score soak period |
 | `PORT` | `8000` | Dashboard server port |
+
+### Soak Monitoring
+
+Use `SCAMHOUND_SOAK_MODE=true` during score validation windows to avoid billing
+while observing model quality. Monitor summary metrics with:
+
+- `GET /api/soak/audit`
+- `GET /api/_legacy/soak/audit`
 
 ## Architecture
 
