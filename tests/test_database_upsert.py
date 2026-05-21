@@ -88,3 +88,36 @@ def test_save_score_persists_and_updates_llm_attempts(temp_database):
     assert updated is not None
     assert updated["risk_score"] == 70
     assert updated["llm_attempts"] == 1
+
+
+def test_get_soak_audit_summary_reports_retry_and_unknown_signals(temp_database):
+    """Soak summary should reflect retry counts and unknown-data rates."""
+    mint_a = "MintSoakA111111111111111111111111111111111"
+    mint_b = "MintSoakB111111111111111111111111111111111"
+
+    first = _sample_score(mint_a, 20, "token age unknown right now")
+    first["risk_level"] = "LOW"
+    first["score_source"] = "ai_anthropic"
+    first["llm_attempts"] = 2
+    first["creator_wallet"] = "Unknown"
+    first["wallet_age_days"] = -1
+    first["top_risk_factors"] = ["Unknown token age prevents full assessment"]
+    database.save_score(first)
+
+    second = _sample_score(mint_b, 0, "fallback")
+    second["risk_level"] = "UNSCORED"
+    second["score_source"] = "fallback"
+    second["llm_attempts"] = 1
+    second["creator_wallet"] = "CreatorWallet11111111111111111111111111"
+    second["wallet_age_days"] = 10
+    second["top_risk_factors"] = []
+    database.save_score(second)
+
+    summary = database.get_soak_audit_summary(limit=10)
+
+    assert summary["sample_size"] >= 2
+    assert summary["fallback_count"] >= 1
+    assert summary["retried_count"] >= 1
+    assert summary["unknown_creator_wallet_count"] >= 1
+    assert summary["unknown_wallet_age_count"] >= 1
+    assert summary["unknown_token_age_claim_count"] >= 1

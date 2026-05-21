@@ -646,6 +646,111 @@ def get_stats() -> Dict[str, int]:
     }
 
 
+def get_soak_audit_summary(limit: int = 200) -> Dict[str, Any]:
+    """Summarize recent scoring quality/stability signals for soak monitoring."""
+    safe_limit = max(1, min(int(limit), 1000))
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT risk_level, score_source, ai_verdict, top_risk_factors,
+               creator_wallet, wallet_age_days, llm_attempts
+        FROM scored_tokens
+        ORDER BY scored_at DESC
+        LIMIT ?
+        """,
+        (safe_limit,),
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    sample_size = len(rows)
+    if sample_size == 0:
+        return {
+            "sample_size": 0,
+            "requested_limit": safe_limit,
+            "unscored_count": 0,
+            "fallback_count": 0,
+            "retried_count": 0,
+            "avg_llm_attempts": 0.0,
+            "unknown_creator_wallet_count": 0,
+            "unknown_wallet_age_count": 0,
+            "unknown_token_age_claim_count": 0,
+            "risk_level_breakdown": {},
+            "score_source_breakdown": {},
+        }
+
+    risk_level_breakdown: Dict[str, int] = {}
+    score_source_breakdown: Dict[str, int] = {}
+    unscored_count = 0
+    fallback_count = 0
+    retried_count = 0
+    total_attempts = 0
+    unknown_creator_wallet_count = 0
+    unknown_wallet_age_count = 0
+    unknown_token_age_claim_count = 0
+
+    for row in rows:
+        risk_level = str(row.get("risk_level") or "UNKNOWN")
+        score_source = str(row.get("score_source") or "unknown")
+        risk_level_breakdown[risk_level] = risk_level_breakdown.get(risk_level, 0) + 1
+        score_source_breakdown[score_source] = (
+            score_source_breakdown.get(score_source, 0) + 1
+        )
+
+        if risk_level == "UNSCORED":
+            unscored_count += 1
+        if score_source == "fallback":
+            fallback_count += 1
+
+        try:
+            attempts = int(row.get("llm_attempts") or 1)
+        except (TypeError, ValueError):
+            attempts = 1
+        attempts = max(1, attempts)
+        total_attempts += attempts
+        if attempts > 1:
+            retried_count += 1
+
+        creator_wallet = str(row.get("creator_wallet") or "").strip().lower()
+        if creator_wallet in {"", "unknown", "none", "-"}:
+            unknown_creator_wallet_count += 1
+
+        wallet_age_days = row.get("wallet_age_days")
+        if wallet_age_days is None:
+            unknown_wallet_age_count += 1
+        else:
+            try:
+                if float(wallet_age_days) < 0:
+                    unknown_wallet_age_count += 1
+            except (TypeError, ValueError):
+                unknown_wallet_age_count += 1
+
+        verdict_lower = str(row.get("ai_verdict") or "").lower()
+        factors_text = str(row.get("top_risk_factors") or "").lower()
+        if (
+            "token age unknown" in verdict_lower
+            or "unknown token age" in verdict_lower
+            or "token age unknown" in factors_text
+            or "unknown token age" in factors_text
+        ):
+            unknown_token_age_claim_count += 1
+
+    return {
+        "sample_size": sample_size,
+        "requested_limit": safe_limit,
+        "unscored_count": unscored_count,
+        "fallback_count": fallback_count,
+        "retried_count": retried_count,
+        "avg_llm_attempts": round(total_attempts / sample_size, 2),
+        "unknown_creator_wallet_count": unknown_creator_wallet_count,
+        "unknown_wallet_age_count": unknown_wallet_age_count,
+        "unknown_token_age_claim_count": unknown_token_age_claim_count,
+        "risk_level_breakdown": risk_level_breakdown,
+        "score_source_breakdown": score_source_breakdown,
+    }
+
+
 # ============================================================================
 # Watchlist Functions
 # ============================================================================

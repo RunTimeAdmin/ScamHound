@@ -43,3 +43,31 @@ def test_deep_health_probe_runs_live_checks(fastapi_test_client):
     checks = payload["checks"]
     assert checks["helius"]["live_probe"] == "ok"
     assert checks["birdeye"]["live_probe"] == "ok"
+
+
+def test_soak_audit_endpoint_returns_summary(fastapi_test_client):
+    """Soak audit endpoint should return monitoring summary payload."""
+    summary = {
+        "sample_size": 10,
+        "requested_limit": 10,
+        "unscored_count": 2,
+        "fallback_count": 1,
+        "retried_count": 3,
+        "avg_llm_attempts": 1.4,
+        "unknown_creator_wallet_count": 1,
+        "unknown_wallet_age_count": 2,
+        "unknown_token_age_claim_count": 1,
+        "risk_level_breakdown": {"LOW": 3, "UNSCORED": 2},
+        "score_source_breakdown": {"ai_anthropic": 8, "fallback": 2},
+    }
+
+    with patch(
+        "engine.database.get_soak_audit_summary",
+        return_value=summary,
+    ) as audit_mock:
+        response = fastapi_test_client.get("/api/soak/audit?limit=10")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == summary
+    audit_mock.assert_called_once_with(limit=10)

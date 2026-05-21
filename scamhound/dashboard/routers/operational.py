@@ -42,4 +42,11 @@ def create_operational_router() -> APIRouter:
 
         return JSONResponse(content=platform_router.get_platform_status())
 
+    @router.get("/api/soak/audit")
+    @router.get("/api/_legacy/soak/audit")
+    async def api_soak_audit(limit: int = 200):
+        """Get recent scoring quality/stability summary for soak monitoring."""
+        summary = database.get_soak_audit_summary(limit=limit)
+        return JSONResponse(content=summary)
+
     return router
