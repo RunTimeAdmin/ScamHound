@@ -49,4 +49,29 @@ def create_operational_router() -> APIRouter:
         summary = database.get_soak_audit_summary(limit=limit)
         return JSONResponse(content=summary)
 
+    @router.get("/api/soak/audit/samples")
+    @router.get("/api/_legacy/soak/audit/samples")
+    async def api_soak_audit_samples(
+        limit: int = 50,
+        risk_level: str = None,
+        randomize: bool = True,
+    ):
+        """Get sample token rows for manual soak-window review."""
+        samples = database.get_soak_audit_samples(
+            limit=limit,
+            risk_level=risk_level,
+            randomize=randomize,
+        )
+        return JSONResponse(
+            content={
+                "count": len(samples),
+                "limit": max(1, min(int(limit), 200)),
+                "risk_level_filter": (
+                    str(risk_level).upper().strip() if risk_level else None
+                ),
+                "randomize": randomize,
+                "samples": samples,
+            }
+        )
+
     return router

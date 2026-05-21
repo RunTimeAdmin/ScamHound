@@ -751,6 +751,51 @@ def get_soak_audit_summary(limit: int = 200) -> Dict[str, Any]:
     }
 
 
+def get_soak_audit_samples(
+    limit: int = 50,
+    risk_level: Optional[str] = None,
+    randomize: bool = True,
+) -> List[Dict[str, Any]]:
+    """Return recent scored-token samples for manual soak review."""
+    safe_limit = max(1, min(int(limit), 200))
+    allowed_levels = {"LOW", "MEDIUM", "HIGH", "CRITICAL", "UNSCORED"}
+    normalized_level = str(risk_level or "").strip().upper()
+    use_level_filter = normalized_level in allowed_levels
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    where_clause = "WHERE risk_level = ?" if use_level_filter else ""
+    order_clause = "RANDOM()" if randomize else "scored_at DESC"
+    params: List[Any] = [normalized_level] if use_level_filter else []
+    params.append(safe_limit)
+
+    cursor.execute(
+        f"""
+        SELECT token_mint, name, symbol, risk_score, risk_level, score_source,
+               llm_attempts, creator_wallet, creator_username, wallet_age_days,
+               top_10_concentration, liquidity_usd, ai_verdict, top_risk_factors,
+               top_safe_signals, scored_at
+        FROM scored_tokens
+        {where_clause}
+        ORDER BY {order_clause}
+        LIMIT ?
+        """,
+        params,
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    samples: List[Dict[str, Any]] = []
+    for row in rows:
+        sample = dict(row)
+        sample["top_risk_factors"] = json.loads(sample.get("top_risk_factors", "[]"))
+        sample["top_safe_signals"] = json.loads(sample.get("top_safe_signals", "[]"))
+        samples.append(sample)
+
+    return samples
+
+
 # ============================================================================
 # Watchlist Functions
 # ============================================================================

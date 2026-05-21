@@ -121,3 +121,22 @@ def test_get_soak_audit_summary_reports_retry_and_unknown_signals(temp_database)
     assert summary["unknown_creator_wallet_count"] >= 1
     assert summary["unknown_wallet_age_count"] >= 1
     assert summary["unknown_token_age_claim_count"] >= 1
+
+
+def test_get_soak_audit_samples_applies_risk_filter(temp_database):
+    """Soak samples should respect supported risk-level filters."""
+    low = _sample_score("MintSampleLow111111111111111111111111111111", 20, "ok")
+    low["risk_level"] = "LOW"
+    low["llm_attempts"] = 1
+    database.save_score(low)
+
+    high = _sample_score("MintSampleHigh11111111111111111111111111111", 80, "ok")
+    high["risk_level"] = "HIGH"
+    high["llm_attempts"] = 2
+    database.save_score(high)
+
+    high_samples = database.get_soak_audit_samples(
+        limit=10, risk_level="high", randomize=False
+    )
+    assert len(high_samples) >= 1
+    assert all(sample["risk_level"] == "HIGH" for sample in high_samples)

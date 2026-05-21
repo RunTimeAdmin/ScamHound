@@ -71,3 +71,34 @@ def test_soak_audit_endpoint_returns_summary(fastapi_test_client):
     payload = response.json()
     assert payload == summary
     audit_mock.assert_called_once_with(limit=10)
+
+
+def test_soak_audit_samples_endpoint_returns_rows(fastapi_test_client):
+    """Soak audit sample endpoint should return row payload."""
+    samples = [
+        {
+            "token_mint": "Mint111",
+            "risk_level": "HIGH",
+            "llm_attempts": 2,
+        }
+    ]
+    with patch(
+        "engine.database.get_soak_audit_samples",
+        return_value=samples,
+    ) as sample_mock:
+        response = fastapi_test_client.get(
+            "/api/soak/audit/samples?limit=25&risk_level=high&randomize=false"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["limit"] == 25
+    assert payload["risk_level_filter"] == "HIGH"
+    assert payload["randomize"] is False
+    assert payload["samples"] == samples
+    sample_mock.assert_called_once_with(
+        limit=25,
+        risk_level="high",
+        randomize=False,
+    )
