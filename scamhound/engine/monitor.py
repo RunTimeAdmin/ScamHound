@@ -279,7 +279,9 @@ async def _async_get_bubblemaps_data(token_mint: str) -> Optional[Dict[str, Any]
 async def _async_get_market_data(token_mint: str) -> Optional[Dict[str, Any]]:
     """Async wrapper for getting Birdeye market data."""
     try:
-        market_data = await asyncio.to_thread(birdeye_client.get_full_market_data, token_mint)
+        market_data = await asyncio.to_thread(
+            birdeye_client.get_full_market_data, token_mint, True
+        )
         if market_data:
             return {
                 "overview": market_data.get("overview", {}),

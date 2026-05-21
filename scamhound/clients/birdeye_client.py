@@ -67,7 +67,11 @@ def _enforce_rate_limit() -> None:
         _last_request_time = time.time()
 
 
-def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
+def _make_request(
+    endpoint: str,
+    params: Optional[Dict] = None,
+    use_cache: bool = True,
+) -> Optional[Dict]:
     """
     Make an authenticated request to the Birdeye API.
     
@@ -76,10 +80,11 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
     - Rate limiting (0.5s delay between requests)
     - Retry logic with exponential backoff for 429 errors
     """
-    # Check cache first
-    cached = _check_cache(endpoint, params)
-    if cached is not None:
-        return cached
+    # Check cache first unless caller explicitly requests fresh data.
+    if use_cache:
+        cached = _check_cache(endpoint, params)
+        if cached is not None:
+            return cached
     
     url = f"{BASE_URL}{endpoint}"
     api_key = os.environ.get("BIRDEYE_API_KEY", "")
@@ -111,13 +116,20 @@ def _make_request(endpoint: str, params: Optional[Dict] = None) -> Optional[Dict
         return None
 
 
-def get_token_overview(token_mint: str) -> Optional[Dict[str, Any]]:
+def get_token_overview(
+    token_mint: str,
+    use_cache: bool = True,
+) -> Optional[Dict[str, Any]]:
     """
     Get token overview data.
     
     Returns: price, marketcap, liquidity, volume24h, priceChange24h
     """
-    result = _make_request("/defi/token_overview", params={"address": token_mint})
+    result = _make_request(
+        "/defi/token_overview",
+        params={"address": token_mint},
+        use_cache=use_cache,
+    )
     
     if result is None:
         return None
@@ -373,13 +385,13 @@ def get_price_history(token_mint: str, time_from: int, time_to: int) -> Optional
     return data
 
 
-def get_full_market_data(token_mint: str) -> Dict[str, Any]:
+def get_full_market_data(token_mint: str, fresh: bool = False) -> Dict[str, Any]:
     """
     Get comprehensive market data for a token.
     
     Optimized: calls token_overview once and reuses data for liquidity extraction.
     """
-    overview = get_token_overview(token_mint)
+    overview = get_token_overview(token_mint, use_cache=not fresh)
     # Pass overview data to avoid redundant API call to same endpoint
     liquidity = get_liquidity_data(token_mint, overview_data=overview)
     trades = get_trade_history(token_mint)

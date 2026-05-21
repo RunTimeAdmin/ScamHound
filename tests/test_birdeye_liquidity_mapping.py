@@ -12,7 +12,7 @@ from clients import birdeye_client  # noqa: E402
 
 
 def test_get_token_overview_prefers_liquidity_usd_field():
-    """Overview should prioritize explicit liquidityUsd over generic liquidity."""
+    """Overview should prioritize liquidityUsd over generic liquidity."""
     payload = {
         "data": {
             "price": 1.0,
@@ -61,3 +61,21 @@ def test_get_token_overview_normalizes_creator_and_created_at_fields():
     assert overview is not None
     assert overview["creator_wallet"] == payload["data"]["creatorWallet"]
     assert overview["created_at"] == payload["data"]["launchTime"]
+
+
+def test_get_full_market_data_uses_fresh_overview_when_requested():
+    """Fresh market reads should bypass overview cache."""
+    with patch.object(
+        birdeye_client,
+        "get_token_overview",
+        return_value={"marketcap": 10, "liquidity": 1},
+    ) as mock_overview:
+        with patch.object(
+            birdeye_client, "get_liquidity_data", return_value={}
+        ):
+            with patch.object(
+                birdeye_client, "get_trade_history", return_value={}
+            ):
+                birdeye_client.get_full_market_data("mint", fresh=True)
+
+    mock_overview.assert_called_once_with("mint", use_cache=False)
