@@ -16,6 +16,7 @@ def create_score_detail_router(
     router = APIRouter()
 
     @router.get("/api/score/{token_mint}")
+    @router.get("/api/_legacy/score/{token_mint}")
     async def api_score(request: Request, token_mint: str):
         """
         API endpoint for a single token score.
@@ -43,6 +44,7 @@ def create_score_detail_router(
         return response
 
     @router.get("/api/score/{token_mint}/history")
+    @router.get("/api/_legacy/score/{token_mint}/history")
     async def api_score_history(request: Request, token_mint: str):
         """Get score history for a token across rescoring events."""
         key_row, key_error = check_api_key_fn(request)

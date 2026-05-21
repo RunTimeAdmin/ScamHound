@@ -19,6 +19,7 @@ def create_scores_router(
     router = APIRouter()
 
     @router.get("/api/scores")
+    @router.get("/api/_legacy/scores")
     async def api_scores(
         request: Request,
         limit: int = 50,
@@ -138,6 +139,7 @@ def create_scores_router(
         return response
 
     @router.delete("/api/scores/clear")
+    @router.delete("/api/_legacy/scores/clear")
     async def clear_scores(request: Request):
         """Clear scan results. Admin clears all; regular user clears own."""
         request_id = getattr(request.state, "request_id", "")
