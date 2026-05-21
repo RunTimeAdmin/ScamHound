@@ -85,3 +85,34 @@ def test_critical_tweet_copy_is_review_cautious():
 
     assert "RUG PULL WARNING" not in text
     assert "pending human review" in text
+
+
+def test_twitter_init_is_lazy_and_cached():
+    """Twitter clients should initialize on first use and only once."""
+    twitter_bot._twitter_initialized = False
+    twitter_bot._twitter_enabled = False
+
+    with patch.object(
+        twitter_bot, "_init_twitter", return_value=True
+    ) as init_mock:
+        first = twitter_bot._ensure_twitter_initialized()
+        second = twitter_bot._ensure_twitter_initialized()
+
+    assert first is True
+    assert second is True
+    init_mock.assert_called_once()
+
+
+def test_send_pending_alerts_skips_when_twitter_unavailable(temp_database):
+    """Alert dispatch should exit cleanly if runtime Twitter init fails."""
+    mint = "TweetNoInit11111111111111111111111111111111"
+    database.save_score(_score(mint, 90))
+    database.approve_tweet(mint, approved_by="admin@example.com")
+    twitter_bot._twitter_initialized = False
+    twitter_bot._twitter_enabled = False
+
+    with patch.object(twitter_bot, "_init_twitter", return_value=False):
+        with patch.object(twitter_bot, "post_tweet") as post_mock:
+            twitter_bot.send_pending_alerts()
+
+    post_mock.assert_not_called()

@@ -6,6 +6,7 @@ Posts formatted risk alerts to @ScamHoundCrypto
 import os
 import logging
 import time
+import threading
 from typing import Dict, Any
 
 import tweepy
@@ -18,6 +19,9 @@ RISK_THRESHOLD = int(os.getenv("RISK_ALERT_THRESHOLD", "65"))
 # Initialize Twitter API client (OAuth 1.0a for posting tweets)
 api = None
 client = None
+_twitter_enabled = False
+_twitter_initialized = False
+_twitter_init_lock = threading.Lock()
 
 
 def _get_twitter_credentials():
@@ -65,7 +69,17 @@ def _init_twitter():
         return False
 
 
-twitter_enabled = _init_twitter()
+def _ensure_twitter_initialized() -> bool:
+    """Lazily initialize Twitter clients once at runtime."""
+    global _twitter_enabled, _twitter_initialized
+    if _twitter_initialized:
+        return _twitter_enabled
+
+    with _twitter_init_lock:
+        if not _twitter_initialized:
+            _twitter_enabled = _init_twitter()
+            _twitter_initialized = True
+    return _twitter_enabled
 
 
 def format_tweet(token: Dict[str, Any]) -> str:
@@ -145,7 +159,7 @@ def post_tweet(text: str) -> bool:
     """
     global client
     
-    if not twitter_enabled or client is None:
+    if not _ensure_twitter_initialized() or client is None:
         logger.warning("[TWITTER] Cannot post - Twitter not enabled")
         return False
     
@@ -174,7 +188,7 @@ def send_pending_alerts() -> None:
     """
     from engine import database
     
-    if not twitter_enabled:
+    if not _ensure_twitter_initialized():
         logger.info("[TWITTER] Skipping alerts - Twitter not enabled")
         return
     
