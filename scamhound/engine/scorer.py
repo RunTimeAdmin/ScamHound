@@ -11,6 +11,7 @@ from typing import Dict, Any
 from datetime import datetime, timezone
 
 import anthropic
+from config import get_config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ def _get_deepseek_client():
 
 def _call_llm(system_prompt: str, user_prompt: str) -> str:
     """Call the configured LLM provider and return the response text."""
-    provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    provider = get_config("LLM_PROVIDER", "anthropic").lower()
 
     if provider == "deepseek":
         return _call_deepseek(system_prompt, user_prompt)
@@ -72,7 +73,7 @@ def _call_deepseek(system_prompt: str, user_prompt: str) -> str:
     if not client:
         raise ValueError("DEEPSEEK_API_KEY not configured")
 
-    model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+    model = get_config("DEEPSEEK_MODEL", "deepseek-chat")
 
     response = client.chat.completions.create(
         model=model,
@@ -94,7 +95,7 @@ def _call_anthropic(system_prompt: str, user_prompt: str) -> str:
     if not client:
         raise ValueError("ANTHROPIC_API_KEY not configured")
 
-    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    model = get_config("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 
     response = client.messages.create(
         model=model,
@@ -501,7 +502,7 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
     
     Returns a complete score dict with all fields needed for database.
     """
-    provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    provider = get_config("LLM_PROVIDER", "anthropic").lower()
     logger.info(f"[SCORER] Using LLM provider: {provider}")
 
     # Verify the selected provider has credentials

@@ -17,11 +17,20 @@ DB_PATH = os.getenv("DB_PATH", "scamhound.db")
 
 def get_connection() -> sqlite3.Connection:
     """Get a database connection with row factory enabled."""
-    conn = sqlite3.connect(DB_PATH)
+    try:
+        timeout_seconds = float(os.getenv("SQLITE_CONNECT_TIMEOUT_SECONDS", "10"))
+    except ValueError:
+        timeout_seconds = 10.0
+    conn = sqlite3.connect(DB_PATH, timeout=timeout_seconds)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    try:
+        busy_timeout_ms = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000"))
+    except ValueError:
+        busy_timeout_ms = 5000
+    conn.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
     return conn
 
 

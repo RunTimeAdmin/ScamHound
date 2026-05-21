@@ -4,7 +4,7 @@ Tests for scorer output normalization safeguards.
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scamhound"))
 
@@ -136,3 +136,39 @@ def test_parse_llm_json_response_handles_extra_braces_in_trailing_noise():
 
     assert result["risk_score"] == 40
     assert result["risk_level"] == "MEDIUM"
+
+
+def test_call_llm_uses_configured_provider():
+    """Provider routing should honor config-backed LLM_PROVIDER."""
+    with patch.object(scorer, "get_config", return_value="deepseek"):
+        with patch.object(
+            scorer, "_call_deepseek", return_value="ok"
+        ) as deepseek:
+            with patch.object(
+                scorer, "_call_anthropic", return_value="nope"
+            ) as anthropic:
+                result = scorer._call_llm("system", "user")
+
+    assert result == "ok"
+    deepseek.assert_called_once_with("system", "user")
+    anthropic.assert_not_called()
+
+
+def test_call_anthropic_uses_model_from_config():
+    """Anthropic call should use configurable model name."""
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = MagicMock(
+        content=[MagicMock(text='{"risk_score": 1}')]
+    )
+
+    with patch.object(
+        scorer, "_get_anthropic_client", return_value=fake_client
+    ):
+        with patch.object(
+            scorer, "get_config", return_value="claude-sonnet-configured"
+        ):
+            scorer._call_anthropic("system", "user")
+
+    fake_client.messages.create.assert_called_once()
+    kwargs = fake_client.messages.create.call_args.kwargs
+    assert kwargs["model"] == "claude-sonnet-configured"
