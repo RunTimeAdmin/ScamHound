@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent.parent / "scamhound"))
 
 from engine import database  # noqa: E402
+from alerts import twitter_bot  # noqa: E402
 
 
 def _score(token_mint: str, risk_score: int = 80) -> dict:
@@ -75,3 +76,12 @@ def test_admin_can_approve_tweet_via_api(fastapi_test_client):
     assert token is not None
     assert token["tweet_approved_by"] == "admin@example.com"
     assert token["tweet_approved_at"] is not None
+
+
+def test_critical_tweet_copy_is_review_cautious():
+    """Critical alerts should avoid definitive rug-pull language."""
+    payload = _score("TweetTone11111111111111111111111111111111", 90)
+    text = twitter_bot.format_tweet(payload)
+
+    assert "RUG PULL WARNING" not in text
+    assert "pending human review" in text

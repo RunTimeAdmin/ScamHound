@@ -67,7 +67,7 @@ def main():
         port=port,
         log_level="info",
         proxy_headers=True,
-        forwarded_allow_ips="127.0.0.1"
+        forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1"),
     )
 
 

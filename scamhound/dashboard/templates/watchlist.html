@@ -275,13 +275,15 @@
             const rows = tbody.querySelectorAll('tr[data-wallet]');
             
             if (rows.length === 0) {
-                tbody.innerHTML = `
-                    <tr id="empty-state">
-                        <td colspan="7" class="empty-state">
-                            No wallets on watchlist. Add a wallet above to start monitoring.
-                        </td>
-                    </tr>
-                `;
+                const row = document.createElement('tr');
+                row.id = 'empty-state';
+                const cell = document.createElement('td');
+                cell.colSpan = 7;
+                cell.className = 'empty-state';
+                cell.textContent =
+                    'No wallets on watchlist. Add a wallet above to start monitoring.';
+                row.appendChild(cell);
+                tbody.appendChild(row);
             }
         }
 

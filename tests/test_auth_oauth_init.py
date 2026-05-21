@@ -40,3 +40,24 @@ def test_init_oauth_raises_on_partial_configuration():
             )
         except RuntimeError as exc:
             assert "both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET" in str(exc)
+
+
+def test_get_jwt_secret_fails_when_missing_or_too_short():
+    """JWT secret must hard-fail if missing or weak."""
+    auth = _fresh_auth_module()
+    with patch.dict(auth.os.environ, {"JWT_SECRET": ""}, clear=True):
+        try:
+            auth.get_jwt_secret()
+            assert False, "Expected RuntimeError for missing JWT_SECRET"
+        except RuntimeError as exc:
+            assert "at least 32 characters" in str(exc)
+
+    auth = _fresh_auth_module()
+    with patch.dict(
+        auth.os.environ, {"JWT_SECRET": "short-secret"}, clear=True
+    ):
+        try:
+            auth.get_jwt_secret()
+            assert False, "Expected RuntimeError for short JWT_SECRET"
+        except RuntimeError as exc:
+            assert "at least 32 characters" in str(exc)

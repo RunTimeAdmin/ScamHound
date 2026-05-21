@@ -249,6 +249,14 @@ def _add_rate_limit_headers(response: JSONResponse, key_row: dict) -> JSONRespon
     return response
 
 
+def _is_admin_authenticated(request: Request) -> bool:
+    """Allow either admin OAuth session or legacy admin token auth."""
+    user = get_current_user(request)
+    if user and user.get("is_admin"):
+        return True
+    return _verify_auth(request)
+
+
 async def _startup_runtime() -> None:
     """Initialize runtime dependencies and background schedulers."""
     global _main_event_loop, _daily_reset_scheduler, _rescore_scheduler
@@ -257,6 +265,8 @@ async def _startup_runtime() -> None:
     _main_event_loop = asyncio.get_running_loop()
     config_source = load_config()
     logger.info(f"[SCAMHOUND] Config source: {config_source}")
+    # Hard-fail startup if JWT secret is missing/weak.
+    get_jwt_secret()
     database.init_db()
     database.reset_daily_counters()
     oauth_enabled = init_oauth()
@@ -297,13 +307,20 @@ async def _startup_runtime() -> None:
 
         def broadcast_callback(score_data: dict):
             """Callback to broadcast score via WebSocket from any thread."""
-            if _main_event_loop is None:
+            if _main_event_loop is None or _main_event_loop.is_closed():
                 logger.debug("[WEBSOCKET] Main event loop unavailable, skipping")
                 return
 
-            asyncio.run_coroutine_threadsafe(
+            future = asyncio.run_coroutine_threadsafe(
                 broadcast_new_score(score_data), _main_event_loop
             )
+            def _on_done(completed_future):
+                try:
+                    completed_future.result()
+                except Exception as exc:
+                    logger.warning(f"[WEBSOCKET] Broadcast scheduling failed: {exc}")
+
+            future.add_done_callback(_on_done)
 
         monitor.set_new_score_callback(broadcast_callback)
         logger.info("[SCAMHOUND] WebSocket callback registered with monitor")
@@ -318,7 +335,7 @@ async def _startup_runtime() -> None:
 
 async def _shutdown_runtime() -> None:
     """Shutdown background schedulers cleanly."""
-    global _autoscan_scheduler, _daily_reset_scheduler, _rescore_scheduler
+    global _autoscan_scheduler, _daily_reset_scheduler, _rescore_scheduler, _main_event_loop
 
     for scheduler_name in (
         "_autoscan_scheduler",
@@ -334,6 +351,7 @@ async def _shutdown_runtime() -> None:
         except Exception as e:
             logger.warning(f"[SCAMHOUND] Failed stopping {scheduler_name}: {e}")
         globals()[scheduler_name] = None
+    _main_event_loop = None
 
 
 @asynccontextmanager
@@ -463,8 +481,7 @@ async def watchlist_page(request: Request):
     Watchlist page.
     Shows all watched wallets with management UI.
     """
-    user = get_current_user(request)
-    if not user or not user.get("is_admin"):
+    if not _is_admin_authenticated(request):
         return RedirectResponse(url="/", status_code=302)
 
     watchlist = database.get_watchlist()
@@ -734,8 +751,7 @@ async def api_watchlist(request: Request):
     API endpoint for watchlist.
     Returns all watchlist entries as JSON.
     """
-    user = get_current_user(request)
-    if not user or not user.get("is_admin"):
+    if not _is_admin_authenticated(request):
         return JSONResponse(
             content={"success": False, "error": "Admin access required"},
             status_code=401
@@ -751,8 +767,7 @@ async def api_add_to_watchlist(request: Request):
     Add a wallet to the watchlist.
     Accepts JSON: {"wallet_address": "...", "label": "...", "notes": "..."}
     """
-    user = get_current_user(request)
-    if not user or not user.get("is_admin"):
+    if not _is_admin_authenticated(request):
         return JSONResponse(
             content={"success": False, "error": "Admin access required"},
             status_code=401
@@ -809,8 +824,7 @@ async def api_remove_from_watchlist(request: Request, wallet_address: str):
     """
     Remove a wallet from the watchlist.
     """
-    user = get_current_user(request)
-    if not user or not user.get("is_admin"):
+    if not _is_admin_authenticated(request):
         return JSONResponse(
             content={"success": False, "error": "Admin access required"},
             status_code=401
@@ -1915,4 +1929,10 @@ async def broadcast_new_score(score_data: dict):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8000)),
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1"),
+    )

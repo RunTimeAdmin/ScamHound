@@ -88,9 +88,12 @@ def format_tweet(token: Dict[str, Any]) -> str:
     
     # Format based on risk level
     if risk_level == "CRITICAL":
-        # Critical alert format
-        tweet = f"🚨🚨 CRITICAL RISK INDICATORS — ${symbol} on @BagsApp\n\n"
-        tweet += f"💀 Risk Score: {score}/100 — CRITICAL (automated signal)\n"
+        # Critical alert format (language intentionally cautious until review).
+        tweet = f"⚠️ REVIEW NEEDED — ${symbol} on @BagsApp\n\n"
+        tweet += (
+            f"🤖 Automated risk signal: {score}/100 "
+            "(CRITICAL band, pending human review)\n"
+        )
         
         if risk_factors and len(risk_factors) > 0:
             tweet += f"🔴 {risk_factors[0][:50]}\n"
@@ -99,11 +102,13 @@ def format_tweet(token: Dict[str, Any]) -> str:
         
         # Add verdict (truncated)
         if verdict:
-            verdict_short = verdict[:80] + "..." if len(verdict) > 80 else verdict
+            verdict_short = (
+                verdict[:80] + "..." if len(verdict) > 80 else verdict
+            )
             tweet += f"\n{verdict_short}\n"
         
         tweet += f"\n🐕 ScamHound | @DeFiAuditCCIE | bags.fm/{token_mint[:8]}\n"
-        tweet += "#RugPull #Solana #ScamHound"
+        tweet += "#Solana #ScamHound #RiskMonitoring"
         
     else:
         # High risk format
@@ -174,7 +179,9 @@ def send_pending_alerts() -> None:
         return
     
     # Get approved, unnotified high-risk tokens
-    high_risk_tokens = database.get_high_risk_unnotified(threshold=RISK_THRESHOLD)
+    high_risk_tokens = database.get_high_risk_unnotified(
+        threshold=RISK_THRESHOLD
+    )
     
     if not high_risk_tokens:
         logger.info("[TWITTER] No approved high-risk tokens to alert")
@@ -207,5 +214,8 @@ def send_pending_alerts() -> None:
 
 def test_tweet() -> bool:
     """Test Twitter integration by posting a test tweet."""
-    test_text = "🐕 ScamHound is watching... Test alert from the rug pull detection system. #Solana #ScamHound"
+    test_text = (
+        "🐕 ScamHound is watching... Test alert from the rug pull detection "
+        "system. #Solana #ScamHound"
+    )
     return post_tweet(test_text)

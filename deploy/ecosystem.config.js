@@ -1,8 +1,8 @@
 module.exports = {
   apps: [{
     name: 'scamhound',
-    cwd: '/opt/scamhound/scamhound/scamhound',
-    script: 'main.py',
+    cwd: '/opt/scamhound/scamhound',
+    script: '/opt/scamhound/scamhound/scamhound/main.py',
     interpreter: '/opt/scamhound/venv/bin/python',
     env_file: '/opt/scamhound/.env',
     env: {
