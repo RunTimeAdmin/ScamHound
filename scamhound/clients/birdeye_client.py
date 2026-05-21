@@ -163,9 +163,21 @@ def get_token_overview(token_mint: str) -> Optional[Dict[str, Any]]:
         ),
         "creator_wallet": (
             data.get("creatorAddress")
+            or data.get("creatorWallet")
+            or data.get("creator")
             or data.get("creator_address")
+            or data.get("creator_wallet")
+            or data.get("deployerAddress")
             or data.get("owner")
             or data.get("deployer")
+        ),
+        "created_at": (
+            data.get("createdAt")
+            or data.get("created_at")
+            or data.get("launchTime")
+            or data.get("launch_time")
+            or data.get("createdTime")
+            or data.get("created_time")
         ),
     }
 

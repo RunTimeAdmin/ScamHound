@@ -471,6 +471,10 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                             "royalty_pct": 0.0,
                         }
 
+                # Backfill created_at from market overview when Bags did not provide it.
+                if not token_data.get("created_at") and overview.get("created_at"):
+                    token_data["created_at"] = overview.get("created_at")
+
                 # Prefer real holder count from market overview when available.
                 # Helius getTokenLargestAccounts only gives top holders, so earlier
                 # values can be rough estimates for newer scans.
@@ -507,6 +511,13 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                         )
                 except (TypeError, ValueError):
                     pass
+
+        # Recompute age/status after market enrichment in case created_at was backfilled.
+        if token_data.get("token_age_minutes") is None and token_data.get("created_at"):
+            token_data["token_age_minutes"] = _calculate_token_age_minutes(
+                token_data.get("created_at")
+            )
+            token_data["token_status"] = _get_token_status(token_data)
         
         # Get creator wallet
         creator_wallet = token_data.get("creator", {}).get("wallet")
