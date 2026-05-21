@@ -482,6 +482,7 @@ def _apply_security_control_weights(
         )
 
     simulation_status = str(token_data.get("honeypot_simulation_status") or "")
+    total_route_price_impact = token_data.get("jupiter_total_price_impact_pct")
     if simulation_status == "sell_quote_unavailable":
         additions += 40
         enforced_factors.append(
@@ -492,6 +493,17 @@ def _apply_security_control_weights(
         enforced_factors.append(
             "Jupiter round-trip check indicates extreme immediate sell loss."
         )
+    if isinstance(total_route_price_impact, (int, float)):
+        if total_route_price_impact >= 25:
+            additions += 15
+            enforced_factors.append(
+                "Jupiter route diagnostics show very high combined price impact."
+            )
+        elif total_route_price_impact >= 12:
+            additions += 8
+            enforced_factors.append(
+                "Jupiter route diagnostics show elevated combined price impact."
+            )
 
     if bool(token_data.get("bundle_launch_suspected")):
         additions += 25
@@ -717,6 +729,14 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     sell_count = int(token_data.get("sell_count", 0) or 0)
     honeypot_simulation_status = token_data.get("honeypot_simulation_status")
     honeypot_round_trip_loss_pct = token_data.get("honeypot_round_trip_loss_pct")
+    jupiter_buy_route_count = token_data.get("jupiter_buy_route_count")
+    jupiter_sell_route_count = token_data.get("jupiter_sell_route_count")
+    jupiter_buy_price_impact_pct = token_data.get("jupiter_buy_price_impact_pct")
+    jupiter_sell_price_impact_pct = token_data.get("jupiter_sell_price_impact_pct")
+    jupiter_total_price_impact_pct = token_data.get(
+        "jupiter_total_price_impact_pct"
+    )
+    jupiter_route_complexity = token_data.get("jupiter_route_complexity")
     bundle_launch_suspected = token_data.get("bundle_launch_suspected")
     bundle_same_slot_or_window = token_data.get("bundle_same_slot_or_window")
     bundle_amount_clustered = token_data.get("bundle_amount_clustered")
@@ -892,6 +912,12 @@ MARKET DATA (Birdeye):
 - Honeypot suspected from trade flow heuristic: {honeypot_suspected}
 - Honeypot simulation status: {honeypot_simulation_status}
 - Honeypot round-trip loss %: {honeypot_round_trip_loss_pct}
+- Jupiter buy route count: {jupiter_buy_route_count}
+- Jupiter sell route count: {jupiter_sell_route_count}
+- Jupiter buy price impact %: {jupiter_buy_price_impact_pct}
+- Jupiter sell price impact %: {jupiter_sell_price_impact_pct}
+- Jupiter total route price impact %: {jupiter_total_price_impact_pct}
+- Jupiter route complexity: {jupiter_route_complexity}
 - Bundle launch suspected: {bundle_launch_suspected}
 - Buys clustered in slot/time window: {bundle_same_slot_or_window}
 - Buy amounts clustered: {bundle_amount_clustered}
@@ -1041,6 +1067,24 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
                 ),
                 "honeypot_round_trip_loss_pct": token_data.get(
                     "honeypot_round_trip_loss_pct"
+                ),
+                "jupiter_buy_route_count": token_data.get(
+                    "jupiter_buy_route_count"
+                ),
+                "jupiter_sell_route_count": token_data.get(
+                    "jupiter_sell_route_count"
+                ),
+                "jupiter_buy_price_impact_pct": token_data.get(
+                    "jupiter_buy_price_impact_pct"
+                ),
+                "jupiter_sell_price_impact_pct": token_data.get(
+                    "jupiter_sell_price_impact_pct"
+                ),
+                "jupiter_total_price_impact_pct": token_data.get(
+                    "jupiter_total_price_impact_pct"
+                ),
+                "jupiter_route_complexity": token_data.get(
+                    "jupiter_route_complexity"
                 ),
                 "bundle_launch_suspected": token_data.get(
                     "bundle_launch_suspected"
@@ -1230,6 +1274,18 @@ def _fallback_score(
         "honeypot_round_trip_loss_pct": token_data.get(
             "honeypot_round_trip_loss_pct"
         ),
+        "jupiter_buy_route_count": token_data.get("jupiter_buy_route_count"),
+        "jupiter_sell_route_count": token_data.get("jupiter_sell_route_count"),
+        "jupiter_buy_price_impact_pct": token_data.get(
+            "jupiter_buy_price_impact_pct"
+        ),
+        "jupiter_sell_price_impact_pct": token_data.get(
+            "jupiter_sell_price_impact_pct"
+        ),
+        "jupiter_total_price_impact_pct": token_data.get(
+            "jupiter_total_price_impact_pct"
+        ),
+        "jupiter_route_complexity": token_data.get("jupiter_route_complexity"),
         "bundle_launch_suspected": token_data.get(
             "bundle_launch_suspected"
         ),

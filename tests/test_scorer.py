@@ -115,7 +115,8 @@ def test_calculate_risk_score_removes_missing_bubblemaps_as_risk_factor():
     """Missing BubbleMaps data is never a risk factor."""
     llm_payload = (
         '{"risk_score":58,"risk_level":"MEDIUM","verdict":"ok",'
-        '"top_risk_factors":["No BubbleMaps data available for cluster analysis",'
+        '"top_risk_factors":['
+        '"No BubbleMaps data available for cluster analysis",'
         '"Low holder count"],'
         '"top_safe_signals":[]}'
     )
@@ -173,6 +174,8 @@ def test_build_user_prompt_includes_tier1_security_controls():
     token_data["buy_count"] = 9
     token_data["sell_count"] = 0
     token_data["honeypot_suspected"] = True
+    token_data["jupiter_total_price_impact_pct"] = 14.2
+    token_data["jupiter_route_complexity"] = "multi_hop"
 
     prompt = scorer.build_user_prompt(token_data)
 
@@ -183,6 +186,7 @@ def test_build_user_prompt_includes_tier1_security_controls():
     assert "LP locked (if detected): False" in prompt
     assert "LP burned (if detected): False" in prompt
     assert "Honeypot suspected from trade flow heuristic: True" in prompt
+    assert "Jupiter total route price impact %: 14.2" in prompt
 
 
 def test_call_llm_uses_configured_provider():
@@ -307,7 +311,9 @@ def test_due_diligence_guard_accepts_trade_activity_fallback_counts():
         '"top_risk_factors":[],"top_safe_signals":[]}'
     )
     token_data = _sample_token_data()
-    token_data["creator"] = {"wallet": "CreatorWallet11111111111111111111111111"}
+    token_data["creator"] = {
+        "wallet": "CreatorWallet11111111111111111111111111"
+    }
     token_data["wallet_age_days"] = 40
     token_data["token_age_minutes"] = 120
     token_data["unique_trader_count"] = 0
@@ -365,6 +371,27 @@ def test_calculate_risk_score_applies_jupiter_simulation_weight():
     assert result["risk_score"] >= 60
     assert any(
         "buy route but no sell route" in factor.lower()
+        for factor in result["top_risk_factors"]
+    )
+
+
+def test_calculate_risk_score_applies_jupiter_price_impact_weight():
+    """Elevated combined route price impact should add deterministic risk."""
+    llm_payload = (
+        '{"risk_score":30,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["honeypot_simulation_status"] = "round_trip_ok"
+    token_data["jupiter_total_price_impact_pct"] = 13.5
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 38
+    assert any(
+        "combined price impact" in factor.lower()
         for factor in result["top_risk_factors"]
     )
 

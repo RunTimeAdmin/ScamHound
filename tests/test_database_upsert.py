@@ -110,6 +110,12 @@ def test_save_score_persists_security_check_fields(temp_database):
     score["freeze_authority_whitelisted"] = False
     score["honeypot_simulation_status"] = "high_round_trip_loss"
     score["honeypot_round_trip_loss_pct"] = 82.1
+    score["jupiter_buy_route_count"] = 2
+    score["jupiter_sell_route_count"] = 1
+    score["jupiter_buy_price_impact_pct"] = 3.5
+    score["jupiter_sell_price_impact_pct"] = 5.1
+    score["jupiter_total_price_impact_pct"] = 8.6
+    score["jupiter_route_complexity"] = "multi_hop"
     score["bundle_launch_suspected"] = True
     score["bundle_same_slot_or_window"] = True
     score["bundle_amount_clustered"] = True
@@ -159,6 +165,12 @@ def test_save_score_persists_security_check_fields(temp_database):
     assert row["freeze_authority_whitelisted"] == 0
     assert row["honeypot_simulation_status"] == "high_round_trip_loss"
     assert row["honeypot_round_trip_loss_pct"] == 82.1
+    assert row["jupiter_buy_route_count"] == 2
+    assert row["jupiter_sell_route_count"] == 1
+    assert row["jupiter_buy_price_impact_pct"] == 3.5
+    assert row["jupiter_sell_price_impact_pct"] == 5.1
+    assert row["jupiter_total_price_impact_pct"] == 8.6
+    assert row["jupiter_route_complexity"] == "multi_hop"
     assert row["bundle_launch_suspected"] == 1
     assert row["bundle_same_slot_or_window"] == 1
     assert row["bundle_amount_clustered"] == 1

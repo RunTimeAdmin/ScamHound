@@ -61,6 +61,26 @@ def _get_quote(
     return data
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _extract_route_metrics(quote: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract stable route diagnostics from a Jupiter quote payload."""
+    route_plan = quote.get("routePlan")
+    route_count = len(route_plan) if isinstance(route_plan, list) else 0
+    price_impact_pct = _safe_float(quote.get("priceImpactPct"), 0.0)
+    slippage_bps = int(_safe_float(quote.get("slippageBps"), 0.0))
+    return {
+        "route_count": route_count,
+        "price_impact_pct": round(price_impact_pct, 4),
+        "slippage_bps": slippage_bps,
+    }
+
+
 def simulate_round_trip(
     token_mint: str,
     buy_sol: float = 0.01,
@@ -78,6 +98,14 @@ def simulate_round_trip(
             "honeypot_suspected": False,
             "round_trip_loss_pct": None,
             "reason": "missing token mint",
+            "buy_route_count": 0,
+            "sell_route_count": 0,
+            "buy_price_impact_pct": 0.0,
+            "sell_price_impact_pct": 0.0,
+            "buy_slippage_bps": 0,
+            "sell_slippage_bps": 0,
+            "total_price_impact_pct": 0.0,
+            "route_complexity": "unknown",
         }
 
     buy_lamports = int(max(0.0001, float(buy_sol)) * 1_000_000_000)
@@ -91,7 +119,16 @@ def simulate_round_trip(
             "honeypot_suspected": False,
             "round_trip_loss_pct": None,
             "reason": "buy route unavailable",
+            "buy_route_count": 0,
+            "sell_route_count": 0,
+            "buy_price_impact_pct": 0.0,
+            "sell_price_impact_pct": 0.0,
+            "buy_slippage_bps": 0,
+            "sell_slippage_bps": 0,
+            "total_price_impact_pct": 0.0,
+            "route_complexity": "unknown",
         }
+    buy_metrics = _extract_route_metrics(buy_quote)
 
     try:
         tokens_out = int(buy_quote.get("outAmount", "0"))
@@ -104,6 +141,16 @@ def simulate_round_trip(
             "honeypot_suspected": False,
             "round_trip_loss_pct": None,
             "reason": "invalid buy route output",
+            "buy_route_count": buy_metrics["route_count"],
+            "sell_route_count": 0,
+            "buy_price_impact_pct": buy_metrics["price_impact_pct"],
+            "sell_price_impact_pct": 0.0,
+            "buy_slippage_bps": buy_metrics["slippage_bps"],
+            "sell_slippage_bps": 0,
+            "total_price_impact_pct": buy_metrics["price_impact_pct"],
+            "route_complexity": "single_hop"
+            if buy_metrics["route_count"] <= 1
+            else "multi_hop",
         }
 
     sell_quote = _get_quote(token_mint, SOL_MINT, tokens_out)
@@ -114,7 +161,18 @@ def simulate_round_trip(
             "honeypot_suspected": True,
             "round_trip_loss_pct": None,
             "reason": "sell route unavailable after buy route",
+            "buy_route_count": buy_metrics["route_count"],
+            "sell_route_count": 0,
+            "buy_price_impact_pct": buy_metrics["price_impact_pct"],
+            "sell_price_impact_pct": 0.0,
+            "buy_slippage_bps": buy_metrics["slippage_bps"],
+            "sell_slippage_bps": 0,
+            "total_price_impact_pct": buy_metrics["price_impact_pct"],
+            "route_complexity": "single_hop"
+            if buy_metrics["route_count"] <= 1
+            else "multi_hop",
         }
+    sell_metrics = _extract_route_metrics(sell_quote)
 
     try:
         sol_back = int(sell_quote.get("outAmount", "0"))
@@ -125,6 +183,14 @@ def simulate_round_trip(
         loss_pct = None
     else:
         loss_pct = max(0.0, (1.0 - (sol_back / buy_lamports)) * 100.0)
+
+    total_price_impact = (
+        buy_metrics["price_impact_pct"] + sell_metrics["price_impact_pct"]
+    )
+    total_route_count = (
+        buy_metrics["route_count"] + sell_metrics["route_count"]
+    )
+    route_complexity = "multi_hop" if total_route_count > 2 else "single_hop"
 
     suspected = loss_pct is not None and loss_pct >= loss_threshold
     status = "high_round_trip_loss" if suspected else "round_trip_ok"
@@ -141,4 +207,12 @@ def simulate_round_trip(
             round(loss_pct, 2) if loss_pct is not None else None
         ),
         "reason": reason,
+        "buy_route_count": buy_metrics["route_count"],
+        "sell_route_count": sell_metrics["route_count"],
+        "buy_price_impact_pct": buy_metrics["price_impact_pct"],
+        "sell_price_impact_pct": sell_metrics["price_impact_pct"],
+        "buy_slippage_bps": buy_metrics["slippage_bps"],
+        "sell_slippage_bps": sell_metrics["slippage_bps"],
+        "total_price_impact_pct": round(total_price_impact, 4),
+        "route_complexity": route_complexity,
     }

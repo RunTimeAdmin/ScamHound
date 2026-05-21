@@ -311,6 +311,18 @@
                         {% if token.honeypot_simulation_status in ['sell_quote_unavailable', 'high_round_trip_loss'] %}
                         <span class="warning-text">⚠️ Critical</span>
                         {% endif %}
+                        {% if token.jupiter_buy_route_count is not none and token.jupiter_sell_route_count is not none %}
+                        (routes={{ token.jupiter_buy_route_count }}/{{ token.jupiter_sell_route_count }})
+                        {% endif %}
+                        {% if token.jupiter_total_price_impact_pct is not none %}
+                        (impact={{ token.jupiter_total_price_impact_pct }}%)
+                        {% if token.jupiter_total_price_impact_pct >= 12 %}
+                        <span class="warning-text">⚠️ Elevated Impact</span>
+                        {% endif %}
+                        {% endif %}
+                        {% if token.jupiter_route_complexity %}
+                        ({{ token.jupiter_route_complexity }})
+                        {% endif %}
                         {% else %}
                         Not run / unavailable
                         {% endif %}

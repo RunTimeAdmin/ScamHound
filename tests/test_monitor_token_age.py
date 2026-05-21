@@ -678,7 +678,13 @@ def test_scan_single_token_enriches_supply_burn_ratio_from_holders():
         stack.enter_context(
             patch(
                 "engine.monitor._async_get_market_data",
-                new=AsyncMock(return_value=None),
+                new=AsyncMock(
+                    return_value={
+                        "overview": {},
+                        "liquidity": {},
+                        "trades": {},
+                    }
+                ),
             )
         )
         stack.enter_context(
@@ -881,3 +887,125 @@ def test_detect_top_holder_dumping_flags_heavy_top_holder_sells():
     assert result["top_holder_sell_volume_usd"] == 11000.0
     assert result["top_holder_net_sell_usd"] == 11000.0
     assert result["top_holder_net_sell_suspected"] is True
+
+
+def test_scan_single_token_propagates_jupiter_route_diagnostics():
+    """Jupiter diagnostics should flow into scoring payload."""
+    token_mint = "11111111111111111111111111111119"
+    fake_score = {
+        "token_mint": token_mint,
+        "name": "Token",
+        "symbol": "TKN",
+        "risk_score": 55,
+        "risk_level": "MEDIUM",
+        "verdict": "ok",
+        "top_risk_factors": [],
+        "top_safe_signals": [],
+    }
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("engine.monitor.database.token_already_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.was_recently_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bags_profile",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_market_data",
+                new=AsyncMock(
+                    return_value={
+                        "overview": {},
+                        "liquidity": {},
+                        "trades": {},
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_holder_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_token_security_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bubblemaps_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_simulate_honeypot",
+                new=AsyncMock(
+                    return_value={
+                        "checked": True,
+                        "status": "round_trip_ok",
+                        "honeypot_suspected": False,
+                        "round_trip_loss_pct": 2.4,
+                        "buy_route_count": 2,
+                        "sell_route_count": 1,
+                        "buy_price_impact_pct": 1.1,
+                        "sell_price_impact_pct": 1.6,
+                        "total_price_impact_pct": 2.7,
+                        "route_complexity": "multi_hop",
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_analyze_creator",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor.scorer.calculate_risk_score",
+                side_effect=lambda token_data: {
+                    **fake_score,
+                    "jupiter_total_price_impact_pct": token_data.get(
+                        "jupiter_total_price_impact_pct"
+                    ),
+                    "jupiter_route_complexity": token_data.get(
+                        "jupiter_route_complexity"
+                    ),
+                },
+            )
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.is_watched_wallet", return_value=False)
+        )
+        stack.enter_context(patch("engine.monitor.database.save_score"))
+        stack.enter_context(patch("engine.monitor._mark_processed"))
+        stack.enter_context(patch("engine.monitor._notify_new_score"))
+
+        result = monitor.scan_single_token(token_mint, skip_if_scored=False)
+
+    assert result is not None
+    assert result["jupiter_total_price_impact_pct"] == 2.7
+    assert result["jupiter_route_complexity"] == "multi_hop"

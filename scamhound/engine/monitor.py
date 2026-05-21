@@ -849,6 +849,24 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             token_data["honeypot_round_trip_loss_pct"] = honeypot_data.get(
                 "round_trip_loss_pct"
             )
+            token_data["jupiter_buy_route_count"] = int(
+                honeypot_data.get("buy_route_count", 0) or 0
+            )
+            token_data["jupiter_sell_route_count"] = int(
+                honeypot_data.get("sell_route_count", 0) or 0
+            )
+            token_data["jupiter_buy_price_impact_pct"] = float(
+                honeypot_data.get("buy_price_impact_pct", 0) or 0
+            )
+            token_data["jupiter_sell_price_impact_pct"] = float(
+                honeypot_data.get("sell_price_impact_pct", 0) or 0
+            )
+            token_data["jupiter_total_price_impact_pct"] = float(
+                honeypot_data.get("total_price_impact_pct", 0) or 0
+            )
+            token_data["jupiter_route_complexity"] = honeypot_data.get(
+                "route_complexity"
+            )
             token_data["honeypot_simulation_reason"] = honeypot_data.get("reason")
             token_data["honeypot_simulation_checked"] = honeypot_data.get(
                 "checked"
