@@ -116,6 +116,23 @@ def test_save_score_persists_security_check_fields(temp_database):
     score["bundle_funded_by_creator_count"] = 4
     score["wash_trade_cycle_count"] = 3
     score["wash_trade_suspected"] = True
+    score["top_holder_dumping_suspected"] = True
+    score["top_holder_sell_count"] = 3
+    score["top_holder_sell_volume_usd"] = 15000.0
+    score["dexscreener_checked"] = True
+    score["dexscreener_has_pair"] = True
+    score["dexscreener_pair_count"] = 2
+    score["dexscreener_labels"] = ["verified"]
+    score["dexscreener_has_trust_badge"] = True
+    score["dexscreener_has_warning_label"] = False
+    score["dexscreener_warning_labels"] = []
+    score["domain_name"] = "project.io"
+    score["domain_age_checked"] = True
+    score["domain_age_days"] = 12
+    score["domain_recently_registered"] = True
+    score["supply_burn_checked"] = True
+    score["supply_burn_share_pct"] = 31.5
+    score["supply_burn_meaningful"] = True
 
     database.save_score(score)
     row = database.get_token_score(mint)
@@ -143,6 +160,23 @@ def test_save_score_persists_security_check_fields(temp_database):
     assert row["bundle_funded_by_creator_count"] == 4
     assert row["wash_trade_cycle_count"] == 3
     assert row["wash_trade_suspected"] == 1
+    assert row["top_holder_dumping_suspected"] == 1
+    assert row["top_holder_sell_count"] == 3
+    assert row["top_holder_sell_volume_usd"] == 15000.0
+    assert row["dexscreener_checked"] == 1
+    assert row["dexscreener_has_pair"] == 1
+    assert row["dexscreener_pair_count"] == 2
+    assert row["dexscreener_labels"] == ["verified"]
+    assert row["dexscreener_has_trust_badge"] == 1
+    assert row["dexscreener_has_warning_label"] == 0
+    assert row["dexscreener_warning_labels"] == []
+    assert row["domain_name"] == "project.io"
+    assert row["domain_age_checked"] == 1
+    assert row["domain_age_days"] == 12
+    assert row["domain_recently_registered"] == 1
+    assert row["supply_burn_checked"] == 1
+    assert row["supply_burn_share_pct"] == 31.5
+    assert row["supply_burn_meaningful"] == 1
 
 
 def test_soak_audit_summary_reports_retry_and_unknown_signals(

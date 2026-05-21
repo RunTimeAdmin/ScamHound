@@ -395,7 +395,9 @@ def _apply_security_control_weights(
     creator_wallet = token_data.get("creator", {}).get("wallet")
 
     additions = 0
+    reductions = 0
     enforced_factors: list[str] = []
+    enforced_safe_signals: list[str] = []
 
     mint_renounced = security.get("mint_authority_renounced")
     if mint_renounced is False:
@@ -496,6 +498,52 @@ def _apply_security_control_weights(
             "Detected repeated wallet-to-wallet round-trip wash-trade cycles."
         )
 
+    if bool(token_data.get("top_holder_dumping_suspected")):
+        additions += 25
+        enforced_factors.append(
+            "Top holders are actively selling significant size into flow."
+        )
+    if bool(token_data.get("top_holder_net_sell_suspected")):
+        additions += 15
+        enforced_factors.append(
+            "Top holders show strong net sell pressure versus buys."
+        )
+    if bool(token_data.get("holder_velocity_spike")):
+        additions += 10
+        enforced_factors.append(
+            "New holder velocity spiked sharply versus the prior hour."
+        )
+    if bool(token_data.get("dexscreener_has_warning_label")):
+        additions += 20
+        enforced_factors.append(
+            "DexScreener warning labels indicate elevated trust risk."
+        )
+    domain_age_days = token_data.get("domain_age_days")
+    if isinstance(domain_age_days, int):
+        if domain_age_days < 30:
+            additions += 20
+            enforced_factors.append(
+                "Project website domain appears recently registered (<30 days)."
+            )
+        elif domain_age_days < 180:
+            additions += 10
+            enforced_factors.append(
+                "Project website domain is still very new (<180 days)."
+            )
+    supply_burn_checked = bool(token_data.get("supply_burn_checked"))
+    supply_burn_share_pct = token_data.get("supply_burn_share_pct")
+    if supply_burn_checked and isinstance(supply_burn_share_pct, (int, float)):
+        if supply_burn_share_pct >= 50:
+            reductions += 8
+            enforced_safe_signals.append(
+                "A large share of supply appears burned in known sink addresses."
+            )
+        elif supply_burn_share_pct >= 20:
+            reductions += 4
+            enforced_safe_signals.append(
+                "Some supply appears burned in known sink addresses."
+            )
+
     update_authority = security.get("update_authority")
     if _has_known_value(update_authority) and _has_known_value(creator_wallet):
         if str(update_authority) == str(creator_wallet):
@@ -504,14 +552,20 @@ def _apply_security_control_weights(
                 "Metadata update authority is controlled by creator wallet."
             )
 
-    if additions > 0:
-        score_data["risk_score"] = min(100, score_data["risk_score"] + additions)
+    if additions > 0 or reductions > 0:
+        adjusted = score_data["risk_score"] + additions - reductions
+        score_data["risk_score"] = max(0, min(100, adjusted))
         score_data["risk_level"] = _risk_level_from_score(score_data["risk_score"])
         current = list(score_data.get("top_risk_factors", []))
         for factor in enforced_factors:
             if factor not in current:
                 current.append(factor)
         score_data["top_risk_factors"] = current[:5]
+        safe_current = list(score_data.get("top_safe_signals", []))
+        for signal in enforced_safe_signals:
+            if signal not in safe_current:
+                safe_current.append(signal)
+        score_data["top_safe_signals"] = safe_current[:5]
 
     return score_data
 
@@ -557,6 +611,9 @@ Key risk factors to weigh heavily (adjusted for token age):
 - LP unlocked/unburned when lock evidence exists = elevated exit-liquidity risk
 - Buy-heavy / zero-sell flow with enough traders can indicate sell restrictions (honeypot-like behavior)
 - Jupiter round-trip buy/sell simulation failure is a critical honeypot signal
+- DexScreener warning labels should be treated as additional trust risk context
+- Newly registered project domains are a supporting risk signal
+- Burned supply share is supporting context and should only adjust score mildly
 - Liquidity/MCap ratio <0.05 = critical, <0.10 = high (ONLY if token > 1 hour old)
 - Two-sided trader activity ratio >0.7 = critical, >0.5 = high (heuristic signal only; not definitive manipulation proof)
 - Large sell pressure = high
@@ -644,6 +701,40 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     )
     wash_trade_cycle_count = token_data.get("wash_trade_cycle_count")
     wash_trade_suspected = token_data.get("wash_trade_suspected")
+    top_holder_dumping_suspected = token_data.get(
+        "top_holder_dumping_suspected"
+    )
+    top_holder_sell_count = token_data.get("top_holder_sell_count")
+    top_holder_sell_volume_usd = token_data.get("top_holder_sell_volume_usd")
+    top_holder_net_sell_usd = token_data.get("top_holder_net_sell_usd")
+    top_holder_net_sell_suspected = token_data.get(
+        "top_holder_net_sell_suspected"
+    )
+    unique_buyers_last_hour = token_data.get("unique_buyers_last_hour")
+    unique_buyers_prev_hour = token_data.get("unique_buyers_prev_hour")
+    holder_velocity_spike = token_data.get("holder_velocity_spike")
+    dexscreener_checked = token_data.get("dexscreener_checked")
+    dexscreener_has_pair = token_data.get("dexscreener_has_pair")
+    dexscreener_pair_count = token_data.get("dexscreener_pair_count")
+    dexscreener_labels = token_data.get("dexscreener_labels")
+    dexscreener_has_trust_badge = token_data.get(
+        "dexscreener_has_trust_badge"
+    )
+    dexscreener_has_warning_label = token_data.get(
+        "dexscreener_has_warning_label"
+    )
+    dexscreener_warning_labels = token_data.get(
+        "dexscreener_warning_labels"
+    )
+    domain_name = token_data.get("domain_name")
+    domain_age_checked = token_data.get("domain_age_checked")
+    domain_age_days = token_data.get("domain_age_days")
+    domain_recently_registered = token_data.get(
+        "domain_recently_registered"
+    )
+    supply_burn_checked = token_data.get("supply_burn_checked")
+    supply_burn_share_pct = token_data.get("supply_burn_share_pct")
+    supply_burn_meaningful = token_data.get("supply_burn_meaningful")
 
     # Token security controls
     security = token_data.get("security", {})
@@ -778,6 +869,28 @@ MARKET DATA (Birdeye):
 - Buyer wallets funded by creator (count): {bundle_funded_by_creator_count}
 - Wash-trade cycle count: {wash_trade_cycle_count}
 - Wash-trade suspected: {wash_trade_suspected}
+- Top-holder dumping suspected: {top_holder_dumping_suspected}
+- Top-holder sell count: {top_holder_sell_count}
+- Top-holder sell volume USD: {top_holder_sell_volume_usd}
+- Top-holder net sell USD: {top_holder_net_sell_usd}
+- Top-holder net-sell suspected: {top_holder_net_sell_suspected}
+- Unique buyers (last hour): {unique_buyers_last_hour}
+- Unique buyers (previous hour): {unique_buyers_prev_hour}
+- Holder velocity spike: {holder_velocity_spike}
+- DexScreener checked: {dexscreener_checked}
+- DexScreener has pair: {dexscreener_has_pair}
+- DexScreener pair count: {dexscreener_pair_count}
+- DexScreener labels: {dexscreener_labels}
+- DexScreener trust badge: {dexscreener_has_trust_badge}
+- DexScreener warning label present: {dexscreener_has_warning_label}
+- DexScreener warning labels: {dexscreener_warning_labels}
+- Project website domain: {domain_name}
+- Domain age checked: {domain_age_checked}
+- Domain age (days): {domain_age_days}
+- Domain recently registered: {domain_recently_registered}
+- Supply burn checked: {supply_burn_checked}
+- Supply burn share percent: {supply_burn_share_pct}
+- Supply burn meaningful signal: {supply_burn_meaningful}
 
 TOKEN SECURITY CONTROLS (On-chain):
 - Mint authority renounced: {mint_authority_renounced}
@@ -913,14 +1026,60 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
                 "wash_trade_suspected": token_data.get(
                     "wash_trade_suspected"
                 ),
-                "bundle_launch_suspected": token_data.get(
-                    "bundle_launch_suspected"
+                "top_holder_dumping_suspected": token_data.get(
+                    "top_holder_dumping_suspected"
                 ),
-                "bundle_same_slot_or_window": token_data.get(
-                    "bundle_same_slot_or_window"
+                "top_holder_sell_count": token_data.get(
+                    "top_holder_sell_count"
                 ),
-                "bundle_amount_clustered": token_data.get(
-                    "bundle_amount_clustered"
+                "top_holder_sell_volume_usd": token_data.get(
+                    "top_holder_sell_volume_usd"
+                ),
+                "top_holder_net_sell_usd": token_data.get(
+                    "top_holder_net_sell_usd"
+                ),
+                "top_holder_net_sell_suspected": token_data.get(
+                    "top_holder_net_sell_suspected"
+                ),
+                "unique_buyers_last_hour": token_data.get(
+                    "unique_buyers_last_hour"
+                ),
+                "unique_buyers_prev_hour": token_data.get(
+                    "unique_buyers_prev_hour"
+                ),
+                "holder_velocity_spike": token_data.get(
+                    "holder_velocity_spike"
+                ),
+                "dexscreener_checked": token_data.get(
+                    "dexscreener_checked"
+                ),
+                "dexscreener_has_pair": token_data.get(
+                    "dexscreener_has_pair"
+                ),
+                "dexscreener_pair_count": token_data.get(
+                    "dexscreener_pair_count"
+                ),
+                "dexscreener_labels": token_data.get("dexscreener_labels", []),
+                "dexscreener_has_trust_badge": token_data.get(
+                    "dexscreener_has_trust_badge"
+                ),
+                "dexscreener_has_warning_label": token_data.get(
+                    "dexscreener_has_warning_label"
+                ),
+                "dexscreener_warning_labels": token_data.get(
+                    "dexscreener_warning_labels",
+                    [],
+                ),
+                "domain_name": token_data.get("domain_name"),
+                "domain_age_checked": token_data.get("domain_age_checked"),
+                "domain_age_days": token_data.get("domain_age_days"),
+                "domain_recently_registered": token_data.get(
+                    "domain_recently_registered"
+                ),
+                "supply_burn_checked": token_data.get("supply_burn_checked"),
+                "supply_burn_share_pct": token_data.get("supply_burn_share_pct"),
+                "supply_burn_meaningful": token_data.get(
+                    "supply_burn_meaningful"
                 ),
                 "update_authority": token_data.get("security", {}).get(
                     "update_authority"
@@ -1042,15 +1201,53 @@ def _fallback_score(
         "wash_trade_suspected": token_data.get(
             "wash_trade_suspected"
         ),
-        "bundle_launch_suspected": token_data.get(
-            "bundle_launch_suspected"
+        "top_holder_dumping_suspected": token_data.get(
+            "top_holder_dumping_suspected"
         ),
-        "bundle_same_slot_or_window": token_data.get(
-            "bundle_same_slot_or_window"
+        "top_holder_sell_count": token_data.get(
+            "top_holder_sell_count"
         ),
-        "bundle_amount_clustered": token_data.get(
-            "bundle_amount_clustered"
+        "top_holder_sell_volume_usd": token_data.get(
+            "top_holder_sell_volume_usd"
         ),
+        "top_holder_net_sell_usd": token_data.get(
+            "top_holder_net_sell_usd"
+        ),
+        "top_holder_net_sell_suspected": token_data.get(
+            "top_holder_net_sell_suspected"
+        ),
+        "unique_buyers_last_hour": token_data.get(
+            "unique_buyers_last_hour"
+        ),
+        "unique_buyers_prev_hour": token_data.get(
+            "unique_buyers_prev_hour"
+        ),
+        "holder_velocity_spike": token_data.get(
+            "holder_velocity_spike"
+        ),
+        "dexscreener_checked": token_data.get("dexscreener_checked"),
+        "dexscreener_has_pair": token_data.get("dexscreener_has_pair"),
+        "dexscreener_pair_count": token_data.get("dexscreener_pair_count"),
+        "dexscreener_labels": token_data.get("dexscreener_labels", []),
+        "dexscreener_has_trust_badge": token_data.get(
+            "dexscreener_has_trust_badge"
+        ),
+        "dexscreener_has_warning_label": token_data.get(
+            "dexscreener_has_warning_label"
+        ),
+        "dexscreener_warning_labels": token_data.get(
+            "dexscreener_warning_labels",
+            [],
+        ),
+        "domain_name": token_data.get("domain_name"),
+        "domain_age_checked": token_data.get("domain_age_checked"),
+        "domain_age_days": token_data.get("domain_age_days"),
+        "domain_recently_registered": token_data.get(
+            "domain_recently_registered"
+        ),
+        "supply_burn_checked": token_data.get("supply_burn_checked"),
+        "supply_burn_share_pct": token_data.get("supply_burn_share_pct"),
+        "supply_burn_meaningful": token_data.get("supply_burn_meaningful"),
         "update_authority": token_data.get("security", {}).get(
             "update_authority"
         ),

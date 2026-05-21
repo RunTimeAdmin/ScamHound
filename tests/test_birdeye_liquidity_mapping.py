@@ -108,10 +108,30 @@ def test_get_trade_history_detects_wash_trade_cycles():
     """Round-trip A<->B transfers in short windows flag wash cycles."""
     payload = {
         "data": [
-            {"fromOwner": "A", "toOwner": "B", "amountUsd": 100, "timestamp": 1000},
-            {"fromOwner": "B", "toOwner": "A", "amountUsd": 95, "timestamp": 1100},
-            {"fromOwner": "C", "toOwner": "D", "amountUsd": 200, "timestamp": 1200},
-            {"fromOwner": "D", "toOwner": "C", "amountUsd": 185, "timestamp": 1250},
+            {
+                "fromOwner": "A",
+                "toOwner": "B",
+                "amountUsd": 100,
+                "timestamp": 1000,
+            },
+            {
+                "fromOwner": "B",
+                "toOwner": "A",
+                "amountUsd": 95,
+                "timestamp": 1100,
+            },
+            {
+                "fromOwner": "C",
+                "toOwner": "D",
+                "amountUsd": 200,
+                "timestamp": 1200,
+            },
+            {
+                "fromOwner": "D",
+                "toOwner": "C",
+                "amountUsd": 185,
+                "timestamp": 1250,
+            },
         ]
     }
     with patch.object(birdeye_client, "_make_request", return_value=payload):
@@ -120,3 +140,37 @@ def test_get_trade_history_detects_wash_trade_cycles():
     assert trades is not None
     assert trades["wash_trade_cycle_count"] >= 2
     assert trades["wash_trade_suspected"] is True
+
+
+def test_get_trade_history_flags_holder_velocity_spike():
+    """Buyer velocity should spike when recent buyers sharply accelerate."""
+    now = 20000
+    payload = {
+        "data": []
+    }
+    for idx in range(25):
+        payload["data"].append(
+            {
+                "owner": f"new{idx}",
+                "side": "buy",
+                "amountUsd": 25,
+                "timestamp": now - 300,
+            }
+        )
+    for idx in range(5):
+        payload["data"].append(
+            {
+                "owner": f"old{idx}",
+                "side": "buy",
+                "amountUsd": 20,
+                "timestamp": now - 4500,
+            }
+        )
+
+    with patch.object(birdeye_client, "_make_request", return_value=payload):
+        trades = birdeye_client.get_trade_history("mint")
+
+    assert trades is not None
+    assert trades["unique_buyers_last_hour"] >= 20
+    assert trades["unique_buyers_prev_hour"] <= 10
+    assert trades["holder_velocity_spike"] is True

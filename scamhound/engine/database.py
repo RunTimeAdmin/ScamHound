@@ -40,6 +40,12 @@ def _normalize_score_row(row: sqlite3.Row) -> Dict[str, Any]:
     result["token_2022_extensions"] = _decode_json_list(
         result.get("token_2022_extensions")
     )
+    result["dexscreener_labels"] = _decode_json_list(
+        result.get("dexscreener_labels")
+    )
+    result["dexscreener_warning_labels"] = _decode_json_list(
+        result.get("dexscreener_warning_labels")
+    )
     return result
 
 
@@ -106,6 +112,23 @@ def init_db() -> None:
             bundle_funded_by_creator_count INTEGER,
             wash_trade_cycle_count INTEGER,
             wash_trade_suspected INTEGER,
+            top_holder_dumping_suspected INTEGER,
+            top_holder_sell_count INTEGER,
+            top_holder_sell_volume_usd REAL,
+            dexscreener_checked INTEGER,
+            dexscreener_has_pair INTEGER,
+            dexscreener_pair_count INTEGER,
+            dexscreener_labels TEXT,
+            dexscreener_has_trust_badge INTEGER,
+            dexscreener_has_warning_label INTEGER,
+            dexscreener_warning_labels TEXT,
+            domain_name TEXT,
+            domain_age_checked INTEGER,
+            domain_age_days INTEGER,
+            domain_recently_registered INTEGER,
+            supply_burn_checked INTEGER,
+            supply_burn_share_pct REAL,
+            supply_burn_meaningful INTEGER,
             tweet_sent BOOLEAN DEFAULT FALSE,
             scored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TEXT
@@ -331,6 +354,23 @@ def init_db() -> None:
         ("bundle_funded_by_creator_count", "INTEGER"),
         ("wash_trade_cycle_count", "INTEGER"),
         ("wash_trade_suspected", "INTEGER"),
+        ("top_holder_dumping_suspected", "INTEGER"),
+        ("top_holder_sell_count", "INTEGER"),
+        ("top_holder_sell_volume_usd", "REAL"),
+        ("dexscreener_checked", "INTEGER"),
+        ("dexscreener_has_pair", "INTEGER"),
+        ("dexscreener_pair_count", "INTEGER"),
+        ("dexscreener_labels", "TEXT"),
+        ("dexscreener_has_trust_badge", "INTEGER"),
+        ("dexscreener_has_warning_label", "INTEGER"),
+        ("dexscreener_warning_labels", "TEXT"),
+        ("domain_name", "TEXT"),
+        ("domain_age_checked", "INTEGER"),
+        ("domain_age_days", "INTEGER"),
+        ("domain_recently_registered", "INTEGER"),
+        ("supply_burn_checked", "INTEGER"),
+        ("supply_burn_share_pct", "REAL"),
+        ("supply_burn_meaningful", "INTEGER"),
     ]
     for col_name, col_type in new_columns:
         try:
@@ -482,6 +522,10 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
     token_2022_extensions = json.dumps(
         score_data.get("token_2022_extensions", [])
     )
+    dexscreener_labels = json.dumps(score_data.get("dexscreener_labels", []))
+    dexscreener_warning_labels = json.dumps(
+        score_data.get("dexscreener_warning_labels", [])
+    )
     
     # Get score_source from score_data if available, otherwise use parameter
     source = score_data.get("score_source", score_source)
@@ -503,12 +547,21 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
             honeypot_simulation_status, honeypot_round_trip_loss_pct,
             bundle_launch_suspected, bundle_same_slot_or_window,
             bundle_amount_clustered, bundle_funded_by_creator_count,
-            wash_trade_cycle_count, wash_trade_suspected
+            wash_trade_cycle_count, wash_trade_suspected,
+            top_holder_dumping_suspected, top_holder_sell_count,
+            top_holder_sell_volume_usd, dexscreener_checked,
+            dexscreener_has_pair, dexscreener_pair_count, dexscreener_labels,
+            dexscreener_has_trust_badge, dexscreener_has_warning_label,
+            dexscreener_warning_labels, domain_name, domain_age_checked,
+            domain_age_days, domain_recently_registered,
+            supply_burn_checked, supply_burn_share_pct, supply_burn_meaningful
         ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         ON CONFLICT(token_mint) DO UPDATE SET
             name = excluded.name,
@@ -553,6 +606,23 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
             bundle_funded_by_creator_count = excluded.bundle_funded_by_creator_count,
             wash_trade_cycle_count = excluded.wash_trade_cycle_count,
             wash_trade_suspected = excluded.wash_trade_suspected,
+            top_holder_dumping_suspected = excluded.top_holder_dumping_suspected,
+            top_holder_sell_count = excluded.top_holder_sell_count,
+            top_holder_sell_volume_usd = excluded.top_holder_sell_volume_usd,
+            dexscreener_checked = excluded.dexscreener_checked,
+            dexscreener_has_pair = excluded.dexscreener_has_pair,
+            dexscreener_pair_count = excluded.dexscreener_pair_count,
+            dexscreener_labels = excluded.dexscreener_labels,
+            dexscreener_has_trust_badge = excluded.dexscreener_has_trust_badge,
+            dexscreener_has_warning_label = excluded.dexscreener_has_warning_label,
+            dexscreener_warning_labels = excluded.dexscreener_warning_labels,
+            domain_name = excluded.domain_name,
+            domain_age_checked = excluded.domain_age_checked,
+            domain_age_days = excluded.domain_age_days,
+            domain_recently_registered = excluded.domain_recently_registered,
+            supply_burn_checked = excluded.supply_burn_checked,
+            supply_burn_share_pct = excluded.supply_burn_share_pct,
+            supply_burn_meaningful = excluded.supply_burn_meaningful,
             scored_at = CURRENT_TIMESTAMP
     """, (
         score_data.get("token_mint"),
@@ -598,6 +668,23 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
         score_data.get("bundle_funded_by_creator_count"),
         score_data.get("wash_trade_cycle_count"),
         score_data.get("wash_trade_suspected"),
+        score_data.get("top_holder_dumping_suspected"),
+        score_data.get("top_holder_sell_count"),
+        score_data.get("top_holder_sell_volume_usd"),
+        score_data.get("dexscreener_checked"),
+        score_data.get("dexscreener_has_pair"),
+        score_data.get("dexscreener_pair_count"),
+        dexscreener_labels,
+        score_data.get("dexscreener_has_trust_badge"),
+        score_data.get("dexscreener_has_warning_label"),
+        dexscreener_warning_labels,
+        score_data.get("domain_name"),
+        score_data.get("domain_age_checked"),
+        score_data.get("domain_age_days"),
+        score_data.get("domain_recently_registered"),
+        score_data.get("supply_burn_checked"),
+        score_data.get("supply_burn_share_pct"),
+        score_data.get("supply_burn_meaningful"),
     ))
     
     # Append to score history

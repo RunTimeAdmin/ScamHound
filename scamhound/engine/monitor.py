@@ -17,6 +17,8 @@ from clients import bags_client
 from clients import helius_client
 from clients import birdeye_client
 from clients import bubblemaps_client
+from clients import dexscreener_client
+from clients import domain_age_client
 from clients import jupiter_client
 from clients import pumpfun_client
 from clients import platform_router
@@ -195,6 +197,44 @@ def _extract_lp_mint_from_overview(overview: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _detect_top_holder_dumping(
+    top_holders: list,
+    recent_trades: list,
+) -> Dict[str, Any]:
+    """Detect notable sell flow from top holder wallets."""
+    top_wallets = set()
+    for holder in top_holders or []:
+        if not isinstance(holder, dict):
+            continue
+        wallet = str(holder.get("address") or "").strip()
+        if wallet:
+            top_wallets.add(wallet)
+
+    sell_count = 0
+    sell_volume = 0.0
+    buy_volume = 0.0
+    for trade in recent_trades or []:
+        if not isinstance(trade, dict):
+            continue
+        wallet = str(trade.get("wallet") or "").strip()
+        side = str(trade.get("side") or "").lower()
+        if wallet in top_wallets and side == "sell":
+            sell_count += 1
+            sell_volume += float(trade.get("amount_usd") or 0.0)
+        elif wallet in top_wallets and side == "buy":
+            buy_volume += float(trade.get("amount_usd") or 0.0)
+
+    net_sell = max(0.0, sell_volume - buy_volume)
+    suspected = sell_count >= 2 or sell_volume >= 10_000 or net_sell >= 8_000
+    return {
+        "top_holder_dumping_suspected": suspected,
+        "top_holder_sell_count": sell_count,
+        "top_holder_sell_volume_usd": round(sell_volume, 2),
+        "top_holder_net_sell_usd": round(net_sell, 2),
+        "top_holder_net_sell_suspected": net_sell >= 8_000,
+    }
+
+
 async def _async_get_bags_profile(token_mint: str) -> Optional[Dict[str, Any]]:
     """Async wrapper for getting Bags profile."""
     try:
@@ -341,6 +381,35 @@ async def _async_simulate_honeypot(token_mint: str) -> Optional[Dict[str, Any]]:
             f"[SCAMHOUND] Could not simulate round-trip swap for "
             f"{token_mint[:8]}...: {e}"
         )
+        return None
+
+
+async def _async_get_dexscreener_signals(
+    token_mint: str,
+) -> Optional[Dict[str, Any]]:
+    """Async wrapper for DexScreener trust/warning signals."""
+    try:
+        return await asyncio.to_thread(
+            dexscreener_client.get_token_trust_signals,
+            token_mint,
+        )
+    except Exception as e:
+        logger.warning(
+            f"[SCAMHOUND] Could not get DexScreener signals for "
+            f"{token_mint[:8]}...: {e}"
+        )
+        return None
+
+
+async def _async_get_domain_age(urls: list) -> Optional[Dict[str, Any]]:
+    """Async wrapper for website domain-age lookup."""
+    try:
+        return await asyncio.to_thread(
+            domain_age_client.lookup_domain_age_from_urls,
+            urls,
+        )
+    except Exception as e:
+        logger.warning(f"[SCAMHOUND] Could not lookup domain age: {e}")
         return None
 
 
@@ -500,6 +569,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         bubblemaps_task = _async_get_bubblemaps_data(token_mint)
         market_task = _async_get_market_data(token_mint)
         honeypot_task = _async_simulate_honeypot(token_mint)
+        dexscreener_task = _async_get_dexscreener_signals(token_mint)
         
         (
             holder_data,
@@ -507,6 +577,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             bubblemaps_data,
             market_data,
             honeypot_data,
+            dexscreener_data,
         ) = (
             await asyncio.gather(
                 holder_task,
@@ -514,6 +585,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                 bubblemaps_task,
                 market_task,
                 honeypot_task,
+                dexscreener_task,
                 return_exceptions=True,
             )
         )
@@ -521,6 +593,10 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         # Process holder data
         if holder_data and not isinstance(holder_data, Exception):
             token_data["holders"] = holder_data
+            burn_ratio = helius_client.analyze_supply_burn_ratio(
+                holder_data.get("top_holders", [])
+            )
+            token_data.update(burn_ratio)
 
         # Process on-chain mint security controls
         if security_data and not isinstance(security_data, Exception):
@@ -561,6 +637,7 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                 "recent_buy_wallets",
                 [],
             )
+            token_data["recent_trades"] = trades.get("recent_trades", [])
             token_data["wash_trade_cycle_count"] = trades.get(
                 "wash_trade_cycle_count",
                 0,
@@ -569,6 +646,26 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                 "wash_trade_suspected",
                 False,
             )
+            token_data["unique_buyers_last_hour"] = trades.get(
+                "unique_buyers_last_hour",
+                0,
+            )
+            token_data["unique_buyers_prev_hour"] = trades.get(
+                "unique_buyers_prev_hour",
+                0,
+            )
+            token_data["holder_velocity_spike"] = trades.get(
+                "holder_velocity_spike",
+                False,
+            )
+            if token_data.get("holders", {}).get("top_holders"):
+                dumping = _detect_top_holder_dumping(
+                    top_holders=token_data.get("holders", {}).get(
+                        "top_holders", []
+                    ),
+                    recent_trades=token_data.get("recent_trades", []),
+                )
+                token_data.update(dumping)
             
             # Try to get token name/symbol from Birdeye overview
             if overview:
@@ -699,6 +796,45 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                         )
                 except (TypeError, ValueError):
                     pass
+
+        # Process DexScreener supporting trust/warning signals
+        if dexscreener_data and not isinstance(dexscreener_data, Exception):
+            token_data["dexscreener"] = dexscreener_data
+            token_data["dexscreener_checked"] = dexscreener_data.get(
+                "checked", False
+            )
+            token_data["dexscreener_has_pair"] = dexscreener_data.get(
+                "has_pair", False
+            )
+            token_data["dexscreener_pair_count"] = dexscreener_data.get(
+                "pair_count", 0
+            )
+            token_data["dexscreener_labels"] = dexscreener_data.get("labels", [])
+            token_data["dexscreener_has_trust_badge"] = dexscreener_data.get(
+                "has_trust_badge", False
+            )
+            token_data["dexscreener_has_warning_label"] = (
+                dexscreener_data.get("has_warning_label", False)
+            )
+            token_data["dexscreener_warning_labels"] = dexscreener_data.get(
+                "warning_labels",
+                [],
+            )
+            token_data["dexscreener_website_urls"] = dexscreener_data.get(
+                "website_urls",
+                [],
+            )
+
+            domain_data = await _async_get_domain_age(
+                token_data.get("dexscreener_website_urls", [])
+            )
+            if domain_data:
+                token_data["domain_name"] = domain_data.get("domain")
+                token_data["domain_age_checked"] = domain_data.get("checked")
+                token_data["domain_age_days"] = domain_data.get("age_days")
+                token_data["domain_recently_registered"] = domain_data.get(
+                    "recently_registered"
+                )
 
         # Recompute age/status after market enrichment in case created_at was backfilled.
         if token_data.get("token_age_minutes") is None and token_data.get("created_at"):

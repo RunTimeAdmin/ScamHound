@@ -101,6 +101,12 @@ def test_scan_single_token_backfills_age_from_birdeye_launch_time():
         )
         stack.enter_context(
             patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
                 "engine.monitor._async_analyze_creator",
                 new=AsyncMock(return_value=None),
             )
@@ -200,6 +206,12 @@ def test_scan_single_token_enriches_lp_controls_from_lp_mint():
         )
         stack.enter_context(
             patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
                 "engine.monitor._async_analyze_lp_controls",
                 new=AsyncMock(
                     return_value={
@@ -236,3 +248,241 @@ def test_scan_single_token_enriches_lp_controls_from_lp_mint():
 
     assert result is not None
     assert result["lp_locked"] is False
+
+
+def test_scan_single_token_enriches_domain_age_from_dexscreener():
+    """Domain age lookup should enrich token data when websites exist."""
+    token_mint = "11111111111111111111111111111114"
+    fake_score = {
+        "token_mint": token_mint,
+        "name": "Token",
+        "symbol": "TKN",
+        "risk_score": 45,
+        "risk_level": "MEDIUM",
+        "verdict": "ok",
+        "top_risk_factors": [],
+        "top_safe_signals": [],
+    }
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("engine.monitor.database.token_already_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.was_recently_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bags_profile",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_market_data",
+                new=AsyncMock(
+                    return_value={
+                        "overview": {},
+                        "liquidity": {},
+                        "trades": {},
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_holder_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_token_security_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bubblemaps_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_simulate_honeypot",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(
+                    return_value={
+                        "checked": True,
+                        "website_urls": ["https://project.io"],
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_domain_age",
+                new=AsyncMock(
+                    return_value={
+                        "domain": "project.io",
+                        "checked": True,
+                        "age_days": 14,
+                        "recently_registered": True,
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_analyze_creator",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor.scorer.calculate_risk_score",
+                side_effect=lambda token_data: {
+                    **fake_score,
+                    "domain_age_days": token_data.get("domain_age_days"),
+                },
+            )
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.is_watched_wallet", return_value=False)
+        )
+        stack.enter_context(patch("engine.monitor.database.save_score"))
+        stack.enter_context(patch("engine.monitor._mark_processed"))
+        stack.enter_context(patch("engine.monitor._notify_new_score"))
+
+        result = monitor.scan_single_token(token_mint, skip_if_scored=False)
+
+    assert result is not None
+    assert result["domain_age_days"] == 14
+
+
+def test_scan_single_token_enriches_supply_burn_ratio_from_holders():
+    """Holder burn-share signal should flow into scoring input."""
+    token_mint = "11111111111111111111111111111115"
+    fake_score = {
+        "token_mint": token_mint,
+        "name": "Token",
+        "symbol": "TKN",
+        "risk_score": 40,
+        "risk_level": "MEDIUM",
+        "verdict": "ok",
+        "top_risk_factors": [],
+        "top_safe_signals": [],
+    }
+    holders = {
+        "top_holders": [
+            {
+                "address": "1nc1nerator11111111111111111111111111111111",
+                "percentage": 25.0,
+            },
+            {"address": "HolderA", "percentage": 20.0},
+        ]
+    }
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("engine.monitor.database.token_already_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.was_recently_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bags_profile",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_market_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_holder_data",
+                new=AsyncMock(return_value=holders),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_token_security_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bubblemaps_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_simulate_honeypot",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_analyze_creator",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor.scorer.calculate_risk_score",
+                side_effect=lambda token_data: {
+                    **fake_score,
+                    "supply_burn_share_pct": token_data.get(
+                        "supply_burn_share_pct"
+                    ),
+                },
+            )
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.is_watched_wallet", return_value=False)
+        )
+        stack.enter_context(patch("engine.monitor.database.save_score"))
+        stack.enter_context(patch("engine.monitor._mark_processed"))
+        stack.enter_context(patch("engine.monitor._notify_new_score"))
+
+        result = monitor.scan_single_token(token_mint, skip_if_scored=False)
+
+    assert result is not None
+    assert result["supply_burn_share_pct"] == 25.0
+
+
+def test_detect_top_holder_dumping_flags_heavy_top_holder_sells():
+    """Top-holder sell flow should trigger dumping signal."""
+    top_holders = [
+        {"address": "TopA"},
+        {"address": "TopB"},
+    ]
+    recent_trades = [
+        {"wallet": "TopA", "side": "sell", "amount_usd": 4000},
+        {"wallet": "TopB", "side": "sell", "amount_usd": 7000},
+        {"wallet": "Other", "side": "buy", "amount_usd": 1000},
+    ]
+
+    result = monitor._detect_top_holder_dumping(top_holders, recent_trades)
+
+    assert result["top_holder_dumping_suspected"] is True
+    assert result["top_holder_sell_count"] == 2
+    assert result["top_holder_sell_volume_usd"] == 11000.0
+    assert result["top_holder_net_sell_usd"] == 11000.0
+    assert result["top_holder_net_sell_suspected"] is True

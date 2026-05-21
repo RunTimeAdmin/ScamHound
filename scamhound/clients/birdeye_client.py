@@ -289,6 +289,10 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     - recent_buy_wallets: list[dict] for launch-bundle heuristics
     - wash_trade_cycle_count: int
     - wash_trade_suspected: bool
+    - recent_trades: normalized trade rows
+    - unique_buyers_last_hour: int
+    - unique_buyers_prev_hour: int
+    - holder_velocity_spike: bool
     """
     # Birdeye API requires limit to be 1-50
     limit = min(max(limit, 1), 50)
@@ -324,6 +328,7 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     sell_count = 0
     recent_buy_wallets = []
     directional_trades = []
+    recent_trades = []
     
     for trade in trades:
         trader = trade.get("owner") or trade.get("trader") or trade.get("wallet")
@@ -380,6 +385,16 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
                 {
                     "from_wallet": sender,
                     "to_wallet": receiver,
+                    "amount_usd": float(amount_usd or 0),
+                    "timestamp": int(ts) if isinstance(ts, int) else None,
+                }
+            )
+
+        if trader:
+            recent_trades.append(
+                {
+                    "wallet": trader,
+                    "side": side,
                     "amount_usd": float(amount_usd or 0),
                     "timestamp": int(ts) if isinstance(ts, int) else None,
                 }
@@ -442,6 +457,39 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
                     break
 
     wash_trade_suspected = wash_cycle_count >= 2
+
+    timestamps = [t.get("timestamp") for t in recent_trades if t.get("timestamp")]
+    if timestamps:
+        reference_ts = max(int(ts) for ts in timestamps)
+    else:
+        reference_ts = int(datetime.now(timezone.utc).timestamp())
+    last_hour_start = reference_ts - 3600
+    prev_hour_start = reference_ts - 7200
+
+    buyers_last_hour = set()
+    buyers_prev_hour = set()
+    for trade in recent_trades:
+        if str(trade.get("side") or "").lower() != "buy":
+            continue
+        wallet = str(trade.get("wallet") or "").strip()
+        ts = trade.get("timestamp")
+        if not wallet or not isinstance(ts, int):
+            continue
+        if last_hour_start <= ts <= reference_ts:
+            buyers_last_hour.add(wallet)
+        elif prev_hour_start <= ts < last_hour_start:
+            buyers_prev_hour.add(wallet)
+
+    unique_buyers_last_hour = len(buyers_last_hour)
+    unique_buyers_prev_hour = len(buyers_prev_hour)
+    holder_velocity_spike = False
+    if unique_buyers_last_hour >= 20:
+        if unique_buyers_prev_hour == 0:
+            holder_velocity_spike = True
+        else:
+            holder_velocity_spike = (
+                unique_buyers_last_hour / max(1, unique_buyers_prev_hour)
+            ) >= 3.0
     
     return {
         "two_sided_trader_activity_ratio": round(two_sided_ratio, 2),
@@ -457,6 +505,10 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
         "recent_buy_wallets": recent_buy_wallets[:20],
         "wash_trade_cycle_count": wash_cycle_count,
         "wash_trade_suspected": wash_trade_suspected,
+        "recent_trades": recent_trades[:100],
+        "unique_buyers_last_hour": unique_buyers_last_hour,
+        "unique_buyers_prev_hour": unique_buyers_prev_hour,
+        "holder_velocity_spike": holder_velocity_spike,
     }
 
 

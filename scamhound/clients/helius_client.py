@@ -58,6 +58,11 @@ LP_BURN_ADDRESSES = {
     "11111111111111111111111111111111",
 }
 
+TOKEN_BURN_ADDRESSES = {
+    "1nc1nerator11111111111111111111111111111111",
+    "11111111111111111111111111111111",
+}
+
 LP_LOCK_PROVIDER_ADDRESSES = {
     # Common Solana lock destinations/providers.
     "HfoTxFR1Tm6kGxU9r9kUS3X5L5qQkNoP9f8uQfJ4Yf2h": "streamflow",
@@ -370,6 +375,36 @@ def analyze_lp_token_controls(
         "lp_burned_share_pct": round(burned_share, 2),
         "lp_locked_share_pct": round(locked_share, 2),
         "lp_creator_share_pct": round(creator_share, 2),
+    }
+
+
+def analyze_supply_burn_ratio(top_holders: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Estimate supply burn share from top-holder distribution.
+
+    This is a best-effort signal based on visible top holders, not full supply
+    reconstruction across every token account.
+    """
+    holders = [h for h in (top_holders or []) if isinstance(h, dict)]
+    if not holders:
+        return {
+            "supply_burn_checked": False,
+            "supply_burn_share_pct": None,
+            "supply_burn_meaningful": None,
+        }
+
+    burned_share = 0.0
+    for holder in holders:
+        address = str(holder.get("address") or "")
+        pct = float(holder.get("percentage") or 0.0)
+        if address in TOKEN_BURN_ADDRESSES:
+            burned_share += pct
+
+    burned_share = round(burned_share, 2)
+    return {
+        "supply_burn_checked": True,
+        "supply_burn_share_pct": burned_share,
+        "supply_burn_meaningful": burned_share >= 20.0,
     }
 
 

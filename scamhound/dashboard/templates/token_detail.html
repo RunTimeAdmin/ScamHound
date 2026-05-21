@@ -346,6 +346,76 @@
                         {% endif %}
                     </td>
                 </tr>
+                <tr>
+                    <td>Top-Holder Dumping Detection</td>
+                    <td>
+                        {% if token.top_holder_dumping_suspected is none %}
+                        Unknown
+                        {% elif token.top_holder_dumping_suspected %}
+                        Suspected <span class="warning-text">⚠️ Exit-In-Progress Signal</span>
+                        {% else %}
+                        Not detected
+                        {% endif %}
+                        {% if token.top_holder_sell_count is not none %}
+                        (sells={{ token.top_holder_sell_count }},
+                        volume=${{ token.top_holder_sell_volume_usd or 0 }})
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>DexScreener Trust/Warning Labels</td>
+                    <td>
+                        {% if token.dexscreener_checked %}
+                        {% if token.dexscreener_has_warning_label %}
+                        Warning labels
+                        <span class="warning-text">⚠️ Trust Risk</span>
+                        {% elif token.dexscreener_has_trust_badge %}
+                        Trust label detected
+                        {% elif token.dexscreener_has_pair %}
+                        Pair metadata present
+                        {% else %}
+                        No pair metadata
+                        {% endif %}
+                        {% if token.dexscreener_warning_labels %}
+                        (warnings={{ (token.dexscreener_warning_labels or [])|join(', ') }})
+                        {% elif token.dexscreener_labels %}
+                        (labels={{ (token.dexscreener_labels or [])|join(', ') }})
+                        {% endif %}
+                        {% else %}
+                        Not available
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Project Domain Age</td>
+                    <td>
+                        {% if token.domain_age_checked and token.domain_age_days is not none %}
+                        {{ token.domain_name or 'domain' }} ({{ token.domain_age_days }} days)
+                        {% if token.domain_recently_registered %}
+                        <span class="warning-text">⚠️ Newly Registered</span>
+                        {% endif %}
+                        {% elif token.domain_name %}
+                        {{ token.domain_name }} (lookup unavailable)
+                        {% else %}
+                        Not available
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Supply Burn Ratio (Top Holders)</td>
+                    <td>
+                        {% if token.supply_burn_checked and token.supply_burn_share_pct is not none %}
+                        {{ token.supply_burn_share_pct }}%
+                        {% if token.supply_burn_meaningful %}
+                        (meaningful burn share detected)
+                        {% else %}
+                        (low burn share)
+                        {% endif %}
+                        {% else %}
+                        Not available
+                        {% endif %}
+                    </td>
+                </tr>
             </table>
         </div>
 

@@ -382,3 +382,99 @@ def test_calculate_risk_score_weights_wash_trade_cycles():
 
     assert result["risk_score"] >= 45
     assert result["wash_trade_suspected"] is True
+
+
+def test_calculate_risk_score_weights_top_holder_dumping():
+    """Top-holder dumping suspicion should add deterministic risk weight."""
+    llm_payload = (
+        '{"risk_score":30,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["top_holder_dumping_suspected"] = True
+    token_data["top_holder_sell_count"] = 3
+    token_data["top_holder_sell_volume_usd"] = 15000
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 55
+    assert result["top_holder_dumping_suspected"] is True
+
+
+def test_calculate_risk_score_weights_holder_velocity_spike():
+    """Holder-velocity spike should add deterministic risk weight."""
+    llm_payload = (
+        '{"risk_score":30,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["holder_velocity_spike"] = True
+    token_data["unique_buyers_last_hour"] = 40
+    token_data["unique_buyers_prev_hour"] = 8
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 40
+    assert result["holder_velocity_spike"] is True
+
+
+def test_calculate_risk_score_weights_dexscreener_warning_label():
+    """DexScreener warning labels should add deterministic risk."""
+    llm_payload = (
+        '{"risk_score":35,"risk_level":"MEDIUM","verdict":"watch",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["dexscreener_checked"] = True
+    token_data["dexscreener_has_warning_label"] = True
+    token_data["dexscreener_warning_labels"] = ["honeypot"]
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 55
+    assert result["dexscreener_has_warning_label"] is True
+
+
+def test_calculate_risk_score_weights_recent_project_domain():
+    """Very new project domains should add deterministic risk."""
+    llm_payload = (
+        '{"risk_score":30,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["domain_name"] = "project.io"
+    token_data["domain_age_checked"] = True
+    token_data["domain_age_days"] = 12
+    token_data["domain_recently_registered"] = True
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 50
+    assert result["domain_recently_registered"] is True
+
+
+def test_calculate_risk_score_applies_supply_burn_reduction():
+    """Meaningful burned supply should slightly reduce risk score."""
+    llm_payload = (
+        '{"risk_score":40,"risk_level":"MEDIUM","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["supply_burn_checked"] = True
+    token_data["supply_burn_share_pct"] = 30.0
+    token_data["supply_burn_meaningful"] = True
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] <= 36
+    assert result["supply_burn_meaningful"] is True
