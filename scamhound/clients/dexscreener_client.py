@@ -31,6 +31,13 @@ WARNING_LABELS = {
 }
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return default
+
+
 def _normalize_labels(raw_labels: Any) -> List[str]:
     """Return normalized label strings from DexScreener payload."""
     if not isinstance(raw_labels, list):
@@ -60,6 +67,18 @@ def get_token_trust_signals(token_mint: str) -> Dict[str, Any]:
         "website_count": 0,
         "social_count": 0,
         "website_urls": [],
+        "txns_m5_buys": 0,
+        "txns_m5_sells": 0,
+        "txns_m15_buys": 0,
+        "txns_m15_sells": 0,
+        "txns_h1_buys": 0,
+        "txns_h1_sells": 0,
+        "txns_h24_buys": 0,
+        "txns_h24_sells": 0,
+        "pair_created_at": None,
+        "liquidity_usd": 0.0,
+        "market_cap_usd": 0.0,
+        "liquidity_to_mcap_ratio": 0.0,
     }
 
     url = f"{BASE_URL}/latest/dex/tokens/{token_mint}"
@@ -98,6 +117,18 @@ def get_token_trust_signals(token_mint: str) -> Dict[str, Any]:
     website_urls = set()
     trust_badge_detected = False
     warning_detected = False
+    txns_m5_buys = 0
+    txns_m5_sells = 0
+    txns_m15_buys = 0
+    txns_m15_sells = 0
+    txns_h1_buys = 0
+    txns_h1_sells = 0
+    txns_h24_buys = 0
+    txns_h24_sells = 0
+    pair_created_at = None
+    max_liquidity_usd = 0.0
+    max_market_cap_usd = 0.0
+    max_ratio = 0.0
 
     for pair in pairs:
         if not isinstance(pair, dict):
@@ -130,6 +161,43 @@ def get_token_trust_signals(token_mint: str) -> Dict[str, Any]:
             if isinstance(socials, list):
                 social_count += len(socials)
 
+        txns = pair.get("txns", {})
+        if isinstance(txns, dict):
+            m5 = txns.get("m5", {})
+            if isinstance(m5, dict):
+                txns_m5_buys += int(m5.get("buys") or 0)
+                txns_m5_sells += int(m5.get("sells") or 0)
+            m15 = txns.get("m15", {})
+            if isinstance(m15, dict):
+                txns_m15_buys += int(m15.get("buys") or 0)
+                txns_m15_sells += int(m15.get("sells") or 0)
+            h1 = txns.get("h1", {})
+            if isinstance(h1, dict):
+                txns_h1_buys += int(h1.get("buys") or 0)
+                txns_h1_sells += int(h1.get("sells") or 0)
+            h24 = txns.get("h24", {})
+            if isinstance(h24, dict):
+                txns_h24_buys += int(h24.get("buys") or 0)
+                txns_h24_sells += int(h24.get("sells") or 0)
+
+        created_at = pair.get("pairCreatedAt")
+        if isinstance(created_at, (int, float)):
+            normalized = int(created_at)
+            if pair_created_at is None or normalized < int(pair_created_at):
+                pair_created_at = normalized
+
+        pair_liquidity_usd = 0.0
+        liquidity = pair.get("liquidity", {})
+        if isinstance(liquidity, dict):
+            pair_liquidity_usd = _safe_float(liquidity.get("usd"))
+            max_liquidity_usd = max(max_liquidity_usd, pair_liquidity_usd)
+        market_cap = _safe_float(pair.get("marketCap"))
+        fdv = _safe_float(pair.get("fdv"))
+        cap = market_cap if market_cap > 0 else fdv
+        max_market_cap_usd = max(max_market_cap_usd, cap)
+        if cap > 0 and pair_liquidity_usd > 0:
+            max_ratio = max(max_ratio, pair_liquidity_usd / cap)
+
     result.update(
         {
             "checked": True,
@@ -142,6 +210,18 @@ def get_token_trust_signals(token_mint: str) -> Dict[str, Any]:
             "website_count": website_count,
             "social_count": social_count,
             "website_urls": sorted(website_urls),
+            "txns_m5_buys": txns_m5_buys,
+            "txns_m5_sells": txns_m5_sells,
+            "txns_m15_buys": txns_m15_buys,
+            "txns_m15_sells": txns_m15_sells,
+            "txns_h1_buys": txns_h1_buys,
+            "txns_h1_sells": txns_h1_sells,
+            "txns_h24_buys": txns_h24_buys,
+            "txns_h24_sells": txns_h24_sells,
+            "pair_created_at": pair_created_at,
+            "liquidity_usd": max_liquidity_usd,
+            "market_cap_usd": max_market_cap_usd,
+            "liquidity_to_mcap_ratio": round(max_ratio, 4),
         }
     )
     return result

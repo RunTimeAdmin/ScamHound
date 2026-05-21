@@ -353,7 +353,17 @@ def _apply_due_diligence_guard(
 
     if "unique_trader_count" in token_data:
         unique_traders = token_data.get("unique_trader_count")
-        if not isinstance(unique_traders, (int, float)) or unique_traders <= 0:
+        buys = int(token_data.get("buy_count", 0) or 0)
+        sells = int(token_data.get("sell_count", 0) or 0)
+        dexscreener_activity = int(
+            token_data.get("dexscreener_txns_h24_total", 0) or 0
+        )
+        has_activity_fallback = (
+            buys > 0 or sells > 0 or dexscreener_activity > 0
+        )
+        if (
+            not isinstance(unique_traders, (int, float)) or unique_traders <= 0
+        ) and not has_activity_fallback:
             unknown_count += 1
     floor = 0
     if unknown_count >= 3:

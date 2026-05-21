@@ -300,6 +300,27 @@ def test_due_diligence_guard_softens_overconfident_safe_verdict():
     assert result["risk_score"] == 45
 
 
+def test_due_diligence_guard_accepts_trade_activity_fallback_counts():
+    """Non-zero buy/sell fallback should satisfy activity coverage."""
+    llm_payload = (
+        '{"risk_score":22,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["creator"] = {"wallet": "CreatorWallet11111111111111111111111111"}
+    token_data["wallet_age_days"] = 40
+    token_data["token_age_minutes"] = 120
+    token_data["unique_trader_count"] = 0
+    token_data["buy_count"] = 5
+    token_data["sell_count"] = 1
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] == 22
+
+
 def test_calculate_risk_score_applies_authority_security_weights():
     """Hard authority controls should increase score beyond LLM output."""
     llm_payload = (

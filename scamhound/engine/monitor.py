@@ -19,6 +19,7 @@ from clients import birdeye_client
 from clients import bubblemaps_client
 from clients import dexscreener_client
 from clients import domain_age_client
+from clients import geckoterminal_client
 from clients import jupiter_client
 from clients import pumpfun_client
 from clients import platform_router
@@ -366,6 +367,23 @@ async def _async_get_market_data(token_mint: str) -> Optional[Dict[str, Any]]:
         return None
     except Exception as e:
         logger.warning(f"[SCAMHOUND] Could not get market data for {token_mint[:8]}...: {e}")
+        return None
+
+
+async def _async_get_geckoterminal_fallback(
+    token_mint: str,
+) -> Optional[Dict[str, Any]]:
+    """Async wrapper for public GeckoTerminal fallback market signals."""
+    try:
+        return await asyncio.to_thread(
+            geckoterminal_client.get_token_market_fallback,
+            token_mint,
+        )
+    except Exception as e:
+        logger.warning(
+            f"[SCAMHOUND] Could not get GeckoTerminal fallback for "
+            f"{token_mint[:8]}...: {e}"
+        )
         return None
 
 
@@ -787,6 +805,44 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                         )
                         token_data["lp_controls"] = lp_controls
 
+        gecko_data = None
+        needs_gecko_fallback = (
+            float(token_data.get("liquidity_usd", 0) or 0) <= 0
+            or not token_data.get("created_at")
+        )
+        if needs_gecko_fallback:
+            gecko_data = await _async_get_geckoterminal_fallback(token_mint)
+
+        # Public fallback for missing/zero Birdeye market fields.
+        if gecko_data and not isinstance(gecko_data, Exception):
+            token_data["geckoterminal_checked"] = gecko_data.get("checked", False)
+            if float(token_data.get("liquidity_usd", 0) or 0) <= 0:
+                token_data["liquidity_usd"] = float(
+                    gecko_data.get("liquidity_usd", 0) or 0
+                )
+                token_data["liquidity_source"] = "geckoterminal_fallback"
+            if float(token_data.get("liquidity_to_mcap_ratio", 0) or 0) <= 0:
+                token_data["liquidity_to_mcap_ratio"] = float(
+                    gecko_data.get("liquidity_to_mcap_ratio", 0) or 0
+                )
+            if not token_data.get("created_at") and gecko_data.get("pool_created_at"):
+                token_data["created_at"] = gecko_data.get("pool_created_at")
+            gecko_total_txns = int(gecko_data.get("txns_h24_buys", 0) or 0) + int(
+                gecko_data.get("txns_h24_sells", 0) or 0
+            )
+            if (
+                int(token_data.get("buy_count", 0) or 0) == 0
+                and int(token_data.get("sell_count", 0) or 0) == 0
+                and gecko_total_txns > 0
+            ):
+                token_data["buy_count"] = int(gecko_data.get("txns_h24_buys", 0) or 0)
+                token_data["sell_count"] = int(
+                    gecko_data.get("txns_h24_sells", 0) or 0
+                )
+                token_data["trade_activity_source"] = "geckoterminal_fallback"
+                if int(token_data.get("unique_trader_count", 0) or 0) <= 0:
+                    token_data["unique_trader_count"] = gecko_total_txns
+
         # Process Jupiter round-trip honeypot check
         if honeypot_data and not isinstance(honeypot_data, Exception):
             token_data["honeypot_simulation_status"] = honeypot_data.get("status")
@@ -844,6 +900,58 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                 "website_urls",
                 [],
             )
+            token_data["dexscreener_txns_h24_buys"] = int(
+                dexscreener_data.get("txns_h24_buys", 0) or 0
+            )
+            token_data["dexscreener_txns_h24_sells"] = int(
+                dexscreener_data.get("txns_h24_sells", 0) or 0
+            )
+            token_data["dexscreener_txns_h24_total"] = (
+                token_data["dexscreener_txns_h24_buys"]
+                + token_data["dexscreener_txns_h24_sells"]
+            )
+            token_data["dexscreener_pair_created_at"] = dexscreener_data.get(
+                "pair_created_at"
+            )
+            token_data["dexscreener_liquidity_usd"] = float(
+                dexscreener_data.get("liquidity_usd", 0) or 0
+            )
+            token_data["dexscreener_liquidity_to_mcap_ratio"] = float(
+                dexscreener_data.get("liquidity_to_mcap_ratio", 0) or 0
+            )
+
+            # Fallback: when Birdeye recent trade counters are empty, use
+            # DexScreener txn aggregates to avoid false "no activity" unknowns.
+            if (
+                int(token_data.get("buy_count", 0) or 0) == 0
+                and int(token_data.get("sell_count", 0) or 0) == 0
+                and token_data["dexscreener_txns_h24_total"] > 0
+            ):
+                token_data["buy_count"] = token_data["dexscreener_txns_h24_buys"]
+                token_data["sell_count"] = token_data["dexscreener_txns_h24_sells"]
+                token_data["trade_activity_source"] = "dexscreener_fallback"
+                if int(token_data.get("unique_trader_count", 0) or 0) <= 0:
+                    token_data["unique_trader_count"] = token_data[
+                        "dexscreener_txns_h24_total"
+                    ]
+
+            if float(token_data.get("liquidity_usd", 0) or 0) <= 0:
+                if token_data["dexscreener_liquidity_usd"] > 0:
+                    token_data["liquidity_usd"] = token_data[
+                        "dexscreener_liquidity_usd"
+                    ]
+                    token_data["liquidity_source"] = "dexscreener_fallback"
+            if float(token_data.get("liquidity_to_mcap_ratio", 0) or 0) <= 0:
+                ratio = token_data["dexscreener_liquidity_to_mcap_ratio"]
+                if ratio > 0:
+                    token_data["liquidity_to_mcap_ratio"] = ratio
+            if (
+                not token_data.get("created_at")
+                and token_data.get("dexscreener_pair_created_at")
+            ):
+                token_data["created_at"] = token_data.get(
+                    "dexscreener_pair_created_at"
+                )
 
             domain_data = await _async_get_domain_age(
                 token_data.get("dexscreener_website_urls", [])

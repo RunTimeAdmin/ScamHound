@@ -77,6 +77,12 @@ def test_scan_single_token_backfills_age_from_birdeye_launch_time():
         )
         stack.enter_context(
             patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
                 "engine.monitor._async_get_holder_data",
                 new=AsyncMock(return_value=None),
             )
@@ -178,6 +184,12 @@ def test_scan_single_token_enriches_lp_controls_from_lp_mint():
                         "trades": {},
                     }
                 ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
+                new=AsyncMock(return_value=None),
             )
         )
         stack.enter_context(
@@ -291,6 +303,12 @@ def test_scan_single_token_enriches_domain_age_from_dexscreener():
         )
         stack.enter_context(
             patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
                 "engine.monitor._async_get_holder_data",
                 new=AsyncMock(return_value=None),
             )
@@ -365,6 +383,262 @@ def test_scan_single_token_enriches_domain_age_from_dexscreener():
     assert result["domain_age_days"] == 14
 
 
+def test_scan_single_token_uses_dexscreener_trade_fallback_when_empty():
+    """DexScreener txn totals should backfill empty Birdeye counts."""
+    token_mint = "11111111111111111111111111111117"
+    fake_score = {
+        "token_mint": token_mint,
+        "name": "Token",
+        "symbol": "TKN",
+        "risk_score": 40,
+        "risk_level": "MEDIUM",
+        "verdict": "ok",
+        "top_risk_factors": [],
+        "top_safe_signals": [],
+    }
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("engine.monitor.database.token_already_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.was_recently_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bags_profile",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_market_data",
+                new=AsyncMock(
+                    return_value={
+                        "overview": {},
+                        "liquidity": {},
+                        "trades": {
+                            "buy_count": 0,
+                            "sell_count": 0,
+                            "unique_trader_count": 0,
+                        },
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_holder_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_token_security_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bubblemaps_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_simulate_honeypot",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(
+                    return_value={
+                        "checked": True,
+                        "pair_created_at": 1716000000,
+                        "liquidity_usd": 50000,
+                        "liquidity_to_mcap_ratio": 0.15,
+                        "txns_h24_buys": 8,
+                        "txns_h24_sells": 2,
+                        "website_urls": [],
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_domain_age",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_analyze_creator",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor.scorer.calculate_risk_score",
+                side_effect=lambda token_data: {
+                    **fake_score,
+                    "buy_count": token_data.get("buy_count"),
+                    "sell_count": token_data.get("sell_count"),
+                    "trade_activity_source": token_data.get("trade_activity_source"),
+                    "liquidity_usd": token_data.get("liquidity_usd"),
+                    "created_at": token_data.get("created_at"),
+                },
+            )
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.is_watched_wallet", return_value=False)
+        )
+        stack.enter_context(patch("engine.monitor.database.save_score"))
+        stack.enter_context(patch("engine.monitor._mark_processed"))
+        stack.enter_context(patch("engine.monitor._notify_new_score"))
+
+        result = monitor.scan_single_token(token_mint, skip_if_scored=False)
+
+    assert result is not None
+    assert result["buy_count"] == 8
+    assert result["sell_count"] == 2
+    assert result["trade_activity_source"] == "dexscreener_fallback"
+    assert result["liquidity_usd"] == 50000
+    assert result["created_at"] == 1716000000
+
+
+def test_scan_single_token_uses_gecko_market_fallback_when_missing():
+    """Gecko fallback should fill liquidity and trades when missing."""
+    token_mint = "11111111111111111111111111111118"
+    fake_score = {
+        "token_mint": token_mint,
+        "name": "Token",
+        "symbol": "TKN",
+        "risk_score": 40,
+        "risk_level": "MEDIUM",
+        "verdict": "ok",
+        "top_risk_factors": [],
+        "top_safe_signals": [],
+    }
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("engine.monitor.database.token_already_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.was_recently_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bags_profile",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_market_data",
+                new=AsyncMock(
+                    return_value={
+                        "overview": {},
+                        "liquidity": {
+                            "liquidity_usd": 0,
+                            "liquidity_to_mcap_ratio": 0,
+                        },
+                        "trades": {
+                            "buy_count": 0,
+                            "sell_count": 0,
+                            "unique_trader_count": 0,
+                        },
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
+                new=AsyncMock(
+                    return_value={
+                        "checked": True,
+                        "liquidity_usd": 123456.0,
+                        "liquidity_to_mcap_ratio": 0.23,
+                        "txns_h24_buys": 9,
+                        "txns_h24_sells": 4,
+                        "pool_created_at": "2026-05-20T00:00:00Z",
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_holder_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_token_security_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bubblemaps_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_simulate_honeypot",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_analyze_creator",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor.scorer.calculate_risk_score",
+                side_effect=lambda token_data: {
+                    **fake_score,
+                    "liquidity_usd": token_data.get("liquidity_usd"),
+                    "buy_count": token_data.get("buy_count"),
+                    "trade_activity_source": token_data.get("trade_activity_source"),
+                    "created_at": token_data.get("created_at"),
+                },
+            )
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.is_watched_wallet", return_value=False)
+        )
+        stack.enter_context(patch("engine.monitor.database.save_score"))
+        stack.enter_context(patch("engine.monitor._mark_processed"))
+        stack.enter_context(patch("engine.monitor._notify_new_score"))
+
+        result = monitor.scan_single_token(token_mint, skip_if_scored=False)
+
+    assert result is not None
+    assert result["liquidity_usd"] == 123456.0
+    assert result["buy_count"] == 9
+    assert result["trade_activity_source"] == "geckoterminal_fallback"
+    assert result["created_at"] == "2026-05-20T00:00:00Z"
+
+
 def test_scan_single_token_enriches_supply_burn_ratio_from_holders():
     """Holder burn-share signal should flow into scoring input."""
     token_mint = "11111111111111111111111111111115"
@@ -404,6 +678,12 @@ def test_scan_single_token_enriches_supply_burn_ratio_from_holders():
         stack.enter_context(
             patch(
                 "engine.monitor._async_get_market_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
                 new=AsyncMock(return_value=None),
             )
         )
@@ -514,6 +794,12 @@ def test_scan_single_token_propagates_holder_velocity_band():
                         "trades": trades,
                     }
                 ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_geckoterminal_fallback",
+                new=AsyncMock(return_value=None),
             )
         )
         stack.enter_context(
