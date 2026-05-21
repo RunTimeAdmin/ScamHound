@@ -15,6 +15,34 @@ from typing import Optional, List, Dict, Any
 DB_PATH = os.getenv("DB_PATH", "scamhound.db")
 
 
+def _decode_json_list(value: Any) -> List[Any]:
+    """Decode a JSON list string safely."""
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def _normalize_score_row(row: sqlite3.Row) -> Dict[str, Any]:
+    """Normalize decoded fields from a scored token row."""
+    result = dict(row)
+    result["top_risk_factors"] = _decode_json_list(
+        result.get("top_risk_factors")
+    )
+    result["top_safe_signals"] = _decode_json_list(
+        result.get("top_safe_signals")
+    )
+    result["token_2022_extensions"] = _decode_json_list(
+        result.get("token_2022_extensions")
+    )
+    return result
+
+
 def get_connection() -> sqlite3.Connection:
     """Get a database connection with row factory enabled."""
     try:
@@ -58,6 +86,26 @@ def init_db() -> None:
             clustering_score REAL,
             liquidity_usd REAL,
             lifetime_fees_sol REAL,
+            mint_authority_renounced INTEGER,
+            freeze_authority_renounced INTEGER,
+            is_token_2022 INTEGER,
+            token_2022_extensions TEXT,
+            lp_locked INTEGER,
+            lp_burned INTEGER,
+            honeypot_suspected INTEGER,
+            buy_count INTEGER,
+            sell_count INTEGER,
+            update_authority TEXT,
+            transfer_fee_bps INTEGER,
+            transfer_fee_max REAL,
+            permanent_delegate TEXT,
+            freeze_authority_whitelisted INTEGER,
+            bundle_launch_suspected INTEGER,
+            bundle_same_slot_or_window INTEGER,
+            bundle_amount_clustered INTEGER,
+            bundle_funded_by_creator_count INTEGER,
+            wash_trade_cycle_count INTEGER,
+            wash_trade_suspected INTEGER,
             tweet_sent BOOLEAN DEFAULT FALSE,
             scored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TEXT
@@ -259,6 +307,39 @@ def init_db() -> None:
     except sqlite3.OperationalError:
         pass  # Column already exists
 
+    # Add Tier-1 security visibility columns if not exists
+    new_columns = [
+        ("mint_authority_renounced", "INTEGER"),
+        ("freeze_authority_renounced", "INTEGER"),
+        ("is_token_2022", "INTEGER"),
+        ("token_2022_extensions", "TEXT"),
+        ("lp_locked", "INTEGER"),
+        ("lp_burned", "INTEGER"),
+        ("honeypot_suspected", "INTEGER"),
+        ("buy_count", "INTEGER"),
+        ("sell_count", "INTEGER"),
+        ("update_authority", "TEXT"),
+        ("transfer_fee_bps", "INTEGER"),
+        ("transfer_fee_max", "REAL"),
+        ("permanent_delegate", "TEXT"),
+        ("freeze_authority_whitelisted", "INTEGER"),
+        ("honeypot_simulation_status", "TEXT"),
+        ("honeypot_round_trip_loss_pct", "REAL"),
+        ("bundle_launch_suspected", "INTEGER"),
+        ("bundle_same_slot_or_window", "INTEGER"),
+        ("bundle_amount_clustered", "INTEGER"),
+        ("bundle_funded_by_creator_count", "INTEGER"),
+        ("wash_trade_cycle_count", "INTEGER"),
+        ("wash_trade_suspected", "INTEGER"),
+    ]
+    for col_name, col_type in new_columns:
+        try:
+            cursor.execute(
+                f"ALTER TABLE scored_tokens ADD COLUMN {col_name} {col_type}"
+            )
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     conn.close()
     print("[SCAMHOUND] Database initialized")
@@ -347,10 +428,7 @@ def search_scored_tokens(
 
     results = []
     for row in rows:
-        result = dict(row)
-        result["top_risk_factors"] = json.loads(result.get("top_risk_factors", "[]"))
-        result["top_safe_signals"] = json.loads(result.get("top_safe_signals", "[]"))
-        results.append(result)
+        results.append(_normalize_score_row(row))
 
     return {
         "tokens": results,
@@ -401,6 +479,9 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
     # Convert lists to JSON strings for storage
     risk_factors = json.dumps(score_data.get("top_risk_factors", []))
     safe_signals = json.dumps(score_data.get("top_safe_signals", []))
+    token_2022_extensions = json.dumps(
+        score_data.get("token_2022_extensions", [])
+    )
     
     # Get score_source from score_data if available, otherwise use parameter
     source = score_data.get("score_source", score_source)
@@ -414,8 +495,21 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
             top_risk_factors, top_safe_signals, top_10_concentration,
             creator_wallet, creator_username, prior_launches, wallet_age_days,
             clustering_score, liquidity_usd, lifetime_fees_sol, created_at, score_source,
-            platform, user_id, llm_attempts
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            platform, user_id, llm_attempts, mint_authority_renounced,
+            freeze_authority_renounced, is_token_2022, token_2022_extensions,
+            lp_locked, lp_burned, honeypot_suspected, buy_count, sell_count,
+            update_authority, transfer_fee_bps, transfer_fee_max,
+            permanent_delegate, freeze_authority_whitelisted,
+            honeypot_simulation_status, honeypot_round_trip_loss_pct,
+            bundle_launch_suspected, bundle_same_slot_or_window,
+            bundle_amount_clustered, bundle_funded_by_creator_count,
+            wash_trade_cycle_count, wash_trade_suspected
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
         ON CONFLICT(token_mint) DO UPDATE SET
             name = excluded.name,
             symbol = excluded.symbol,
@@ -437,6 +531,28 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
             platform = excluded.platform,
             user_id = COALESCE(excluded.user_id, scored_tokens.user_id),
             llm_attempts = excluded.llm_attempts,
+            mint_authority_renounced = excluded.mint_authority_renounced,
+            freeze_authority_renounced = excluded.freeze_authority_renounced,
+            is_token_2022 = excluded.is_token_2022,
+            token_2022_extensions = excluded.token_2022_extensions,
+            lp_locked = excluded.lp_locked,
+            lp_burned = excluded.lp_burned,
+            honeypot_suspected = excluded.honeypot_suspected,
+            buy_count = excluded.buy_count,
+            sell_count = excluded.sell_count,
+            update_authority = excluded.update_authority,
+            transfer_fee_bps = excluded.transfer_fee_bps,
+            transfer_fee_max = excluded.transfer_fee_max,
+            permanent_delegate = excluded.permanent_delegate,
+            freeze_authority_whitelisted = excluded.freeze_authority_whitelisted,
+            honeypot_simulation_status = excluded.honeypot_simulation_status,
+            honeypot_round_trip_loss_pct = excluded.honeypot_round_trip_loss_pct,
+            bundle_launch_suspected = excluded.bundle_launch_suspected,
+            bundle_same_slot_or_window = excluded.bundle_same_slot_or_window,
+            bundle_amount_clustered = excluded.bundle_amount_clustered,
+            bundle_funded_by_creator_count = excluded.bundle_funded_by_creator_count,
+            wash_trade_cycle_count = excluded.wash_trade_cycle_count,
+            wash_trade_suspected = excluded.wash_trade_suspected,
             scored_at = CURRENT_TIMESTAMP
     """, (
         score_data.get("token_mint"),
@@ -460,6 +576,28 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
         platform,
         score_data.get("user_id"),
         score_data.get("llm_attempts", 1),
+        score_data.get("mint_authority_renounced"),
+        score_data.get("freeze_authority_renounced"),
+        score_data.get("is_token_2022"),
+        token_2022_extensions,
+        score_data.get("lp_locked"),
+        score_data.get("lp_burned"),
+        score_data.get("honeypot_suspected"),
+        score_data.get("buy_count"),
+        score_data.get("sell_count"),
+        score_data.get("update_authority"),
+        score_data.get("transfer_fee_bps"),
+        score_data.get("transfer_fee_max"),
+        score_data.get("permanent_delegate"),
+        score_data.get("freeze_authority_whitelisted"),
+        score_data.get("honeypot_simulation_status"),
+        score_data.get("honeypot_round_trip_loss_pct"),
+        score_data.get("bundle_launch_suspected"),
+        score_data.get("bundle_same_slot_or_window"),
+        score_data.get("bundle_amount_clustered"),
+        score_data.get("bundle_funded_by_creator_count"),
+        score_data.get("wash_trade_cycle_count"),
+        score_data.get("wash_trade_suspected"),
     ))
     
     # Append to score history
@@ -494,11 +632,7 @@ def get_recent_scores(limit: int = 50) -> List[Dict[str, Any]]:
     
     results = []
     for row in rows:
-        result = dict(row)
-        # Parse JSON arrays back
-        result["top_risk_factors"] = json.loads(result.get("top_risk_factors", "[]"))
-        result["top_safe_signals"] = json.loads(result.get("top_safe_signals", "[]"))
-        results.append(result)
+        results.append(_normalize_score_row(row))
     
     return results
 
@@ -519,11 +653,7 @@ def get_token_score(token_mint: str) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
     
-    result = dict(row)
-    result["top_risk_factors"] = json.loads(result.get("top_risk_factors", "[]"))
-    result["top_safe_signals"] = json.loads(result.get("top_safe_signals", "[]"))
-    
-    return result
+    return _normalize_score_row(row)
 
 
 # Alias for batch scan endpoint
@@ -548,10 +678,7 @@ def get_high_risk_unnotified(threshold: int = 65) -> List[Dict[str, Any]]:
     
     results = []
     for row in rows:
-        result = dict(row)
-        result["top_risk_factors"] = json.loads(result.get("top_risk_factors", "[]"))
-        result["top_safe_signals"] = json.loads(result.get("top_safe_signals", "[]"))
-        results.append(result)
+        results.append(_normalize_score_row(row))
     
     return results
 
@@ -611,10 +738,7 @@ def get_pending_tweet_approvals(limit: int = 100) -> List[Dict[str, Any]]:
 
     results = []
     for row in rows:
-        result = dict(row)
-        result["top_risk_factors"] = json.loads(result.get("top_risk_factors", "[]"))
-        result["top_safe_signals"] = json.loads(result.get("top_safe_signals", "[]"))
-        results.append(result)
+        results.append(_normalize_score_row(row))
 
     return results
 
@@ -788,10 +912,7 @@ def get_soak_audit_samples(
 
     samples: List[Dict[str, Any]] = []
     for row in rows:
-        sample = dict(row)
-        sample["top_risk_factors"] = json.loads(sample.get("top_risk_factors", "[]"))
-        sample["top_safe_signals"] = json.loads(sample.get("top_safe_signals", "[]"))
-        samples.append(sample)
+        samples.append(_normalize_score_row(row))
 
     return samples
 
@@ -1401,7 +1522,7 @@ def get_scores_for_user(user_id: int, limit: int = 100, offset: int = 0) -> list
     c = conn.cursor()
     c.execute("""SELECT * FROM scored_tokens WHERE user_id = ?
                  ORDER BY scored_at DESC LIMIT ? OFFSET ?""", (user_id, limit, offset))
-    results = [dict(row) for row in c.fetchall()]
+    results = [_normalize_score_row(row) for row in c.fetchall()]
     conn.close()
     return results
 

@@ -17,6 +17,7 @@ from clients import bags_client
 from clients import helius_client
 from clients import birdeye_client
 from clients import bubblemaps_client
+from clients import jupiter_client
 from clients import pumpfun_client
 from clients import platform_router
 from engine import database
@@ -177,6 +178,23 @@ def _get_token_status(token_data: Dict[str, Any]) -> str:
     return "unknown"
 
 
+def _extract_lp_mint_from_overview(overview: Dict[str, Any]) -> Optional[str]:
+    """Best-effort LP mint extraction across provider payload variants."""
+    if not isinstance(overview, dict):
+        return None
+    candidates = [
+        overview.get("lpMint"),
+        overview.get("lp_mint"),
+        overview.get("liquidityTokenMint"),
+        overview.get("liquidity_token_mint"),
+        overview.get("pairLpMint"),
+    ]
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 async def _async_get_bags_profile(token_mint: str) -> Optional[Dict[str, Any]]:
     """Async wrapper for getting Bags profile."""
     try:
@@ -225,6 +243,23 @@ async def _async_get_holder_data(token_mint: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(
             f"[SCAMHOUND] Could not get holder data for {token_mint[:8]}...: {e}"
+        )
+        return None
+
+
+async def _async_get_token_security_signals(
+    token_mint: str,
+) -> Optional[Dict[str, Any]]:
+    """Async wrapper for mint authorities and Token-2022 signals."""
+    try:
+        return await asyncio.to_thread(
+            helius_client.get_token_security_signals,
+            token_mint,
+        )
+    except Exception as e:
+        logger.warning(
+            f"[SCAMHOUND] Could not get token security signals for "
+            f"{token_mint[:8]}...: {e}"
         )
         return None
 
@@ -291,6 +326,53 @@ async def _async_get_market_data(token_mint: str) -> Optional[Dict[str, Any]]:
         return None
     except Exception as e:
         logger.warning(f"[SCAMHOUND] Could not get market data for {token_mint[:8]}...: {e}")
+        return None
+
+
+async def _async_simulate_honeypot(token_mint: str) -> Optional[Dict[str, Any]]:
+    """Async wrapper for Jupiter round-trip honeypot check."""
+    try:
+        return await asyncio.to_thread(
+            jupiter_client.simulate_round_trip,
+            token_mint,
+        )
+    except Exception as e:
+        logger.warning(
+            f"[SCAMHOUND] Could not simulate round-trip swap for "
+            f"{token_mint[:8]}...: {e}"
+        )
+        return None
+
+
+async def _async_analyze_lp_controls(
+    lp_mint: str,
+    creator_wallet: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Async wrapper for LP burn/lock/creator control analysis."""
+    try:
+        return await asyncio.to_thread(
+            helius_client.analyze_lp_token_controls,
+            lp_mint,
+            creator_wallet,
+        )
+    except Exception as e:
+        logger.warning(f"[SCAMHOUND] Could not analyze LP controls: {e}")
+        return None
+
+
+async def _async_detect_bundle_launch(
+    creator_wallet: Optional[str],
+    recent_buy_wallets: list,
+) -> Optional[Dict[str, Any]]:
+    """Async wrapper for launch bundle/snipe detection."""
+    try:
+        return await asyncio.to_thread(
+            helius_client.analyze_bundle_launch,
+            creator_wallet,
+            recent_buy_wallets,
+        )
+    except Exception as e:
+        logger.warning(f"[SCAMHOUND] Could not detect launch bundle: {e}")
         return None
 
 
@@ -414,17 +496,35 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         
         # Run Helius, BubbleMaps, and Birdeye API calls in parallel
         holder_task = _async_get_holder_data(token_mint)
+        security_task = _async_get_token_security_signals(token_mint)
         bubblemaps_task = _async_get_bubblemaps_data(token_mint)
         market_task = _async_get_market_data(token_mint)
+        honeypot_task = _async_simulate_honeypot(token_mint)
         
-        holder_data, bubblemaps_data, market_data = await asyncio.gather(
-            holder_task, bubblemaps_task, market_task,
-            return_exceptions=True
+        (
+            holder_data,
+            security_data,
+            bubblemaps_data,
+            market_data,
+            honeypot_data,
+        ) = (
+            await asyncio.gather(
+                holder_task,
+                security_task,
+                bubblemaps_task,
+                market_task,
+                honeypot_task,
+                return_exceptions=True,
+            )
         )
         
         # Process holder data
         if holder_data and not isinstance(holder_data, Exception):
             token_data["holders"] = holder_data
+
+        # Process on-chain mint security controls
+        if security_data and not isinstance(security_data, Exception):
+            token_data["security"] = security_data
         
         # Process BubbleMaps data
         if bubblemaps_data and not isinstance(bubblemaps_data, Exception):
@@ -451,6 +551,24 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                 "two_sided_trader_activity_ratio"
             ]
             token_data["large_sell_pressure"] = trades.get("large_sell_pressure", False)
+            token_data["honeypot_suspected"] = trades.get(
+                "honeypot_suspected",
+                False,
+            )
+            token_data["buy_count"] = trades.get("buy_count", 0)
+            token_data["sell_count"] = trades.get("sell_count", 0)
+            token_data["recent_buy_wallets"] = trades.get(
+                "recent_buy_wallets",
+                [],
+            )
+            token_data["wash_trade_cycle_count"] = trades.get(
+                "wash_trade_cycle_count",
+                0,
+            )
+            token_data["wash_trade_suspected"] = trades.get(
+                "wash_trade_suspected",
+                False,
+            )
             
             # Try to get token name/symbol from Birdeye overview
             if overview:
@@ -499,6 +617,74 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                         existing_holders["total_holder_count"] = normalized_holder_count
                         token_data["holders"] = existing_holders
 
+                # Optional LP lock/burn metadata when Birdeye provides it.
+                lp_locked = (
+                    overview.get("lp_locked")
+                    or overview.get("lpLocked")
+                    or overview.get("liquidityLocked")
+                    or overview.get("liquidity_locked")
+                )
+                lp_burned = (
+                    overview.get("lp_burned")
+                    or overview.get("lpBurned")
+                    or overview.get("liquidityBurned")
+                    or overview.get("liquidity_burned")
+                )
+                if lp_locked is not None or lp_burned is not None:
+                    token_data["lp_controls"] = {
+                        "lp_locked": (
+                            bool(lp_locked) if lp_locked is not None else None
+                        ),
+                        "lp_burned": (
+                            bool(lp_burned) if lp_burned is not None else None
+                        ),
+                    }
+
+                # Stronger LP lock/burn verification when LP mint is available.
+                lp_mint = _extract_lp_mint_from_overview(overview)
+                creator_wallet = token_data.get("creator", {}).get("wallet")
+                if lp_mint:
+                    lp_analysis = await _async_analyze_lp_controls(
+                        lp_mint=lp_mint,
+                        creator_wallet=creator_wallet,
+                    )
+                    if lp_analysis:
+                        lp_controls = token_data.get("lp_controls") or {}
+                        lp_controls.update(
+                            {
+                                "lp_locked": lp_analysis.get("lp_locked"),
+                                "lp_burned": lp_analysis.get("lp_burned"),
+                                "lp_unlocked_creator_controlled": lp_analysis.get(
+                                    "lp_unlocked_creator_controlled"
+                                ),
+                                "lp_burned_share_pct": lp_analysis.get(
+                                    "lp_burned_share_pct"
+                                ),
+                                "lp_locked_share_pct": lp_analysis.get(
+                                    "lp_locked_share_pct"
+                                ),
+                                "lp_creator_share_pct": lp_analysis.get(
+                                    "lp_creator_share_pct"
+                                ),
+                            }
+                        )
+                        token_data["lp_controls"] = lp_controls
+
+        # Process Jupiter round-trip honeypot check
+        if honeypot_data and not isinstance(honeypot_data, Exception):
+            token_data["honeypot_simulation_status"] = honeypot_data.get("status")
+            token_data["honeypot_round_trip_loss_pct"] = honeypot_data.get(
+                "round_trip_loss_pct"
+            )
+            token_data["honeypot_simulation_reason"] = honeypot_data.get("reason")
+            token_data["honeypot_simulation_checked"] = honeypot_data.get(
+                "checked"
+            )
+            token_data["honeypot_suspected"] = bool(
+                token_data.get("honeypot_suspected", False)
+                or honeypot_data.get("honeypot_suspected", False)
+            )
+
             # If Birdeye overview included market cap indirectly (as marketcap key)
             # but liquidity ratio wasn't precomputed, derive it here.
             if token_data.get("liquidity_to_mcap_ratio", 0) == 0:
@@ -534,6 +720,10 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
         if creator_wallet:
             # Run creator analysis and clustering check in parallel
             creator_task = _async_analyze_creator(creator_wallet)
+            bundle_task = _async_detect_bundle_launch(
+                creator_wallet=creator_wallet,
+                recent_buy_wallets=token_data.get("recent_buy_wallets", []),
+            )
             
             # Prepare clustering task if we have holder wallets
             holder_wallets = [
@@ -543,13 +733,19 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             
             if holder_wallets:
                 clustering_task = _async_check_clustering(holder_wallets)
-                creator_result, clustering_result = await asyncio.gather(
+                (
+                    creator_result,
+                    clustering_result,
+                    bundle_result,
+                ) = await asyncio.gather(
                     creator_task, clustering_task,
+                    bundle_task,
                     return_exceptions=True
                 )
             else:
                 creator_result = await creator_task
                 clustering_result = None
+                bundle_result = await bundle_task
             
             # Process creator analysis
             if creator_result and not isinstance(creator_result, Exception):
@@ -559,6 +755,9 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             if clustering_result and not isinstance(clustering_result, Exception):
                 token_data["clustering_score"] = clustering_result.get("clustering_score", 0)
                 token_data["clustered_wallets"] = clustering_result.get("clustered_wallets", 0)
+
+            if bundle_result and not isinstance(bundle_result, Exception):
+                token_data.update(bundle_result)
         
         # Calculate risk score
         score_result = scorer.calculate_risk_score(token_data)

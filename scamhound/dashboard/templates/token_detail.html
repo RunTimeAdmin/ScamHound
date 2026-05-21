@@ -177,6 +177,178 @@
             </div>
         </div>
 
+        <div class="detail-section">
+            <h4>✅ Checks Performed</h4>
+            <table class="data-table">
+                <tr>
+                    <td>Mint Authority Renounced</td>
+                    <td>
+                        {% if token.mint_authority_renounced is none %}
+                        Unknown
+                        {% elif token.mint_authority_renounced %}
+                        Yes
+                        {% else %}
+                        No <span class="warning-text">⚠️ Control Risk</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Freeze Authority Renounced</td>
+                    <td>
+                        {% if token.freeze_authority_renounced is none %}
+                        Unknown
+                        {% elif token.freeze_authority_renounced %}
+                        Yes
+                        {% else %}
+                        No
+                        {% if token.freeze_authority_whitelisted %}
+                        (whitelisted compliance mint)
+                        {% else %}
+                        <span class="warning-text">⚠️ Freeze Risk</span>
+                        {% endif %}
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Metadata Update Authority</td>
+                    <td>
+                        {% if token.update_authority %}
+                        {{ token.update_authority[:8] }}...{{ token.update_authority[-4:] }}
+                        {% if token.creator_wallet and token.update_authority == token.creator_wallet %}
+                        <span class="warning-text">⚠️ Creator-Controlled</span>
+                        {% endif %}
+                        {% else %}
+                        Unknown
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Token-2022 Extensions Parsed</td>
+                    <td>
+                        {% if token.is_token_2022 is none %}
+                        Unknown
+                        {% elif token.is_token_2022 %}
+                        Yes ({{ (token.token_2022_extensions or [])|join(', ') if (token.token_2022_extensions or []) else 'none detected' }})
+                        {% else %}
+                        No (legacy SPL token program)
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Transfer Fee (Token-2022)</td>
+                    <td>
+                        {% if token.transfer_fee_bps is not none %}
+                        {{ token.transfer_fee_bps }} bps
+                        {% if token.transfer_fee_max is not none %}
+                        (max fee {{ token.transfer_fee_max }})
+                        {% endif %}
+                        {% if token.transfer_fee_bps >= 500 %}
+                        <span class="warning-text">⚠️ Elevated Tax</span>
+                        {% endif %}
+                        {% else %}
+                        None detected
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Permanent Delegate</td>
+                    <td>
+                        {% if token.permanent_delegate %}
+                        {{ token.permanent_delegate[:8] }}...{{ token.permanent_delegate[-4:] }}
+                        <span class="warning-text">⚠️ Global Transfer Control</span>
+                        {% else %}
+                        Not configured
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>LP Locked</td>
+                    <td>
+                        {% if token.lp_locked is none %}
+                        Unknown
+                        {% elif token.lp_locked %}
+                        Yes
+                        {% else %}
+                        No <span class="warning-text">⚠️ Exit Liquidity Risk</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>LP Burned</td>
+                    <td>
+                        {% if token.lp_burned is none %}
+                        Unknown
+                        {% elif token.lp_burned %}
+                        Yes
+                        {% else %}
+                        No
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Buy/Sell Honeypot Heuristic</td>
+                    <td>
+                        {% if token.honeypot_suspected is none %}
+                        Unknown
+                        {% elif token.honeypot_suspected %}
+                        Suspected <span class="warning-text">⚠️ Sell Restriction Signal</span>
+                        {% else %}
+                        Not detected
+                        {% endif %}
+                        {% if token.buy_count is not none and token.sell_count is not none %}
+                        (buys={{ token.buy_count }}, sells={{ token.sell_count }})
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Jupiter Round-Trip Check</td>
+                    <td>
+                        {% if token.honeypot_simulation_status %}
+                        {{ token.honeypot_simulation_status }}
+                        {% if token.honeypot_round_trip_loss_pct is not none %}
+                        (loss={{ token.honeypot_round_trip_loss_pct }}%)
+                        {% endif %}
+                        {% if token.honeypot_simulation_status in ['sell_quote_unavailable', 'high_round_trip_loss'] %}
+                        <span class="warning-text">⚠️ Critical</span>
+                        {% endif %}
+                        {% else %}
+                        Not run / unavailable
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Bundle Launch Detection</td>
+                    <td>
+                        {% if token.bundle_launch_suspected is none %}
+                        Unknown
+                        {% elif token.bundle_launch_suspected %}
+                        Suspected <span class="warning-text">⚠️ Coordinated Launch</span>
+                        {% else %}
+                        Not detected
+                        {% endif %}
+                        {% if token.bundle_funded_by_creator_count is not none %}
+                        (funded wallets={{ token.bundle_funded_by_creator_count }})
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Wash-Trade Cycle Detection</td>
+                    <td>
+                        {% if token.wash_trade_suspected is none %}
+                        Unknown
+                        {% elif token.wash_trade_suspected %}
+                        Suspected <span class="warning-text">⚠️ Synthetic Volume Signal</span>
+                        {% else %}
+                        Not detected
+                        {% endif %}
+                        {% if token.wash_trade_cycle_count is not none %}
+                        (cycles={{ token.wash_trade_cycle_count }})
+                        {% endif %}
+                    </td>
+                </tr>
+            </table>
+        </div>
+
         <div class="detail-section embed-section">
             <h4>📋 Embed This Badge</h4>
             <p>Copy this code to embed the ScamHound risk badge on your site:</p>

@@ -10,6 +10,7 @@ import requests
 from typing import Optional, Dict, List, Any, Tuple
 import logging
 from collections import Counter
+from datetime import datetime, timezone
 
 from .retry import request_with_retry
 
@@ -282,6 +283,12 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     - large_sell_pressure: bool
     - avg_trade_size_usd: float
     - unique_trader_count: int
+    - buy_count: int
+    - sell_count: int
+    - honeypot_suspected: bool (heuristic only)
+    - recent_buy_wallets: list[dict] for launch-bundle heuristics
+    - wash_trade_cycle_count: int
+    - wash_trade_suspected: bool
     """
     # Birdeye API requires limit to be 1-50
     limit = min(max(limit, 1), 50)
@@ -313,22 +320,70 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     trader_sell_count = Counter()
     total_volume = 0
     large_sells = 0
+    buy_count = 0
+    sell_count = 0
+    recent_buy_wallets = []
+    directional_trades = []
     
     for trade in trades:
         trader = trade.get("owner") or trade.get("trader") or trade.get("wallet")
         side = trade.get("side", "").lower()
         amount_usd = trade.get("amountUsd", 0) or trade.get("amount_usd", 0)
+        slot = trade.get("slot") or trade.get("blockSlot")
+        sender = (
+            trade.get("fromOwner")
+            or trade.get("sourceOwner")
+            or trade.get("maker")
+            or trade.get("from")
+        )
+        receiver = (
+            trade.get("toOwner")
+            or trade.get("destinationOwner")
+            or trade.get("taker")
+            or trade.get("to")
+        )
+        ts = (
+            trade.get("blockUnixTime")
+            or trade.get("blockTime")
+            or trade.get("timestamp")
+            or trade.get("time")
+        )
         
         if trader:
             unique_traders.add(trader)
             if side == "buy":
                 trader_buy_count[trader] += 1
+                buy_count += 1
+                recent_buy_wallets.append(
+                    {
+                        "wallet": trader,
+                        "amount_usd": float(amount_usd or 0),
+                        "slot": int(slot) if isinstance(slot, int) else None,
+                        "timestamp": int(ts) if isinstance(ts, int) else None,
+                    }
+                )
             elif side == "sell":
                 trader_sell_count[trader] += 1
+                sell_count += 1
                 if amount_usd > 1000:  # Large sell
                     large_sells += 1
         
         total_volume += amount_usd
+        if (
+            isinstance(sender, str)
+            and sender
+            and isinstance(receiver, str)
+            and receiver
+            and sender != receiver
+        ):
+            directional_trades.append(
+                {
+                    "from_wallet": sender,
+                    "to_wallet": receiver,
+                    "amount_usd": float(amount_usd or 0),
+                    "timestamp": int(ts) if isinstance(ts, int) else None,
+                }
+            )
     
     # Heuristic only: ratio of wallets with both buy and sell activity.
     # This is not definitive wash-trading detection.
@@ -344,6 +399,49 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     )
     
     avg_trade_size = total_volume / len(trades) if trades else 0
+
+    # Heuristic-only proxy for sell-blocked or heavily restricted tokens.
+    # This is NOT a transaction simulation and should be treated as a signal,
+    # not definitive proof of a honeypot.
+    honeypot_suspected = (
+        buy_count >= 8
+        and sell_count == 0
+        and len(unique_traders) >= 6
+    )
+
+    wash_cycle_count = 0
+    if directional_trades:
+        # Two-leg cycle heuristic: A->B followed by B->A within 30m
+        # with reasonably similar notional sizes.
+        by_pair = {}
+        for t in directional_trades:
+            key = (t["from_wallet"], t["to_wallet"])
+            by_pair.setdefault(key, []).append(t)
+        for (a, b), forward in by_pair.items():
+            reverse = by_pair.get((b, a), [])
+            if not reverse:
+                continue
+            for f in forward:
+                f_ts = f.get("timestamp")
+                f_amt = f.get("amount_usd", 0.0)
+                if not isinstance(f_ts, int) or f_amt <= 0:
+                    continue
+                matched = False
+                for r in reverse:
+                    r_ts = r.get("timestamp")
+                    r_amt = r.get("amount_usd", 0.0)
+                    if not isinstance(r_ts, int) or r_amt <= 0:
+                        continue
+                    if 0 <= r_ts - f_ts <= 1800:
+                        ratio = min(f_amt, r_amt) / max(f_amt, r_amt)
+                        if ratio >= 0.7:
+                            matched = True
+                            break
+                if matched:
+                    wash_cycle_count += 1
+                    break
+
+    wash_trade_suspected = wash_cycle_count >= 2
     
     return {
         "two_sided_trader_activity_ratio": round(two_sided_ratio, 2),
@@ -352,7 +450,13 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
         "wash_trading_score": round(two_sided_ratio, 2),
         "large_sell_pressure": large_sells > 3,
         "avg_trade_size_usd": round(avg_trade_size, 2),
-        "unique_trader_count": len(unique_traders)
+        "unique_trader_count": len(unique_traders),
+        "buy_count": buy_count,
+        "sell_count": sell_count,
+        "honeypot_suspected": honeypot_suspected,
+        "recent_buy_wallets": recent_buy_wallets[:20],
+        "wash_trade_cycle_count": wash_cycle_count,
+        "wash_trade_suspected": wash_trade_suspected,
     }
 
 

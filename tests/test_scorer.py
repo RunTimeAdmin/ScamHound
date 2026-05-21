@@ -41,7 +41,9 @@ def test_calculate_risk_score_clamps_and_normalizes_outputs():
 
 def test_calculate_risk_score_invalid_numeric_falls_back_to_default():
     """Non-numeric score should fallback to 50 and MEDIUM."""
-    llm_payload = '{"risk_score":"not-a-number","risk_level":null,"verdict":"x"}'
+    llm_payload = (
+        '{"risk_score":"not-a-number","risk_level":null,"verdict":"x"}'
+    )
 
     with patch.object(scorer, "_get_anthropic_client", return_value=object()):
         with patch.object(scorer, "_call_llm", return_value=llm_payload):
@@ -55,7 +57,8 @@ def test_calculate_risk_score_parses_json_with_preamble_and_trailer():
     """Scorer should parse JSON even with wrapper text around it."""
     llm_payload = (
         "Here is the analysis:\n"
-        '{"risk_score":72,"risk_level":"HIGH","verdict":"wrapped","top_risk_factors":[],"top_safe_signals":[]}'
+        '{"risk_score":72,"risk_level":"HIGH","verdict":"wrapped",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
         "\nThanks."
     )
 
@@ -84,7 +87,8 @@ def test_calculate_risk_score_sanitizes_age_and_unknown_data_claims():
     """Contradictory maturity/unknown-data claims should be cleaned."""
     llm_payload = (
         '{"risk_score":65,"risk_level":"HIGH",'
-        '"verdict":"This token is brand new (0 minutes old). No immediate red flags.",'
+        '"verdict":"This token is brand new (0 minutes old). '
+        'No immediate red flags.",'
         '"top_risk_factors":['
         '"Creator wallet age unknown",'
         '"No BubbleMaps data available for cluster analysis",'
@@ -111,7 +115,8 @@ def test_calculate_risk_score_removes_missing_bubblemaps_as_risk_factor():
     """Missing BubbleMaps data should never be counted as a risk factor."""
     llm_payload = (
         '{"risk_score":58,"risk_level":"MEDIUM","verdict":"ok",'
-        '"top_risk_factors":["No BubbleMaps data available for cluster analysis","Low holder count"],'
+        '"top_risk_factors":["No BubbleMaps data available for cluster analysis",'
+        '"Low holder count"],'
         '"top_safe_signals":[]}'
     )
     token_data = _sample_token_data()
@@ -130,7 +135,8 @@ def test_parse_llm_json_response_handles_extra_braces_in_trailing_noise():
     """Balanced object extraction should ignore trailing brace-like noise."""
     payload = (
         'prefix {"risk_score": 40, "risk_level": "MEDIUM", "verdict": "ok", '
-        '"top_risk_factors": [], "top_safe_signals": []} trailing note with {bad'
+        '"top_risk_factors": [], "top_safe_signals": []} trailing note '
+        "with {bad"
     )
 
     result = scorer._parse_llm_json_response(payload)
@@ -151,6 +157,32 @@ def test_build_user_prompt_marks_unknown_total_holders_when_missing():
     prompt = scorer.build_user_prompt(token_data)
 
     assert "Total holders: Unknown (top-holder sample only)" in prompt
+
+
+def test_build_user_prompt_includes_tier1_security_controls():
+    """Prompt should include authority, token2022, LP, and honeypot fields."""
+    token_data = _sample_token_data()
+    token_data["security"] = {
+        "mint_authority_renounced": False,
+        "freeze_authority_renounced": True,
+        "is_token_2022": True,
+        "token_2022_extensions": ["TransferFeeConfig"],
+        "token_program_owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    }
+    token_data["lp_controls"] = {"lp_locked": False, "lp_burned": False}
+    token_data["buy_count"] = 9
+    token_data["sell_count"] = 0
+    token_data["honeypot_suspected"] = True
+
+    prompt = scorer.build_user_prompt(token_data)
+
+    assert "Mint authority renounced: False" in prompt
+    assert "Freeze authority renounced: True" in prompt
+    assert "Token-2022 mint: True" in prompt
+    assert "Token-2022 extensions: ['TransferFeeConfig']" in prompt
+    assert "LP locked (if detected): False" in prompt
+    assert "LP burned (if detected): False" in prompt
+    assert "Honeypot suspected from trade flow heuristic: True" in prompt
 
 
 def test_call_llm_uses_configured_provider():
@@ -215,3 +247,138 @@ def test_calculate_risk_score_retries_after_transient_failure():
     assert result["score_source"].startswith("ai_")
     assert result["llm_attempts"] == 2
     assert llm_mock.call_count == 2
+
+
+def test_calculate_risk_score_applies_due_diligence_floor_on_missing_data():
+    """Low scores should be lifted when core diligence signals are missing."""
+    llm_payload = (
+        '{"risk_score":12,"risk_level":"LOW","verdict":"Looks safe.",'
+        '"top_risk_factors":[],"top_safe_signals":['
+        '"No prior rug pulls from creator"]}'
+    )
+    token_data = _sample_token_data()
+    token_data["creator"] = {"wallet": "Unknown"}
+    token_data["wallet_age_days"] = -1
+    token_data["token_age_minutes"] = None
+    token_data["unique_trader_count"] = 0
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] == 45
+    assert result["risk_level"] == "MEDIUM"
+    assert "No prior rug pulls from creator" not in result["top_safe_signals"]
+    assert any(
+        "Limited due diligence data coverage" in factor
+        for factor in result["top_risk_factors"]
+    )
+    assert "missing due diligence data" in result["verdict"].lower()
+
+
+def test_calculate_risk_score_applies_authority_security_weights():
+    """Hard authority controls should increase score independent of LLM output."""
+    llm_payload = (
+        '{"risk_score":15,"risk_level":"LOW","verdict":"Looks clean.",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["security"] = {
+        "mint_authority_renounced": False,
+        "freeze_authority_renounced": False,
+        "freeze_authority_whitelisted": False,
+        "permanent_delegate": "Delegate111111111111111111111111111111",
+        "transfer_fee_bps": 600,
+        "token_2022_extensions": ["PermanentDelegate", "TransferFeeConfig"],
+    }
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 75
+    assert result["risk_level"] in {"HIGH", "CRITICAL"}
+    assert any(
+        "Mint authority is active" in factor
+        for factor in result["top_risk_factors"]
+    )
+
+
+def test_calculate_risk_score_applies_jupiter_simulation_weight():
+    """Critical Jupiter simulation outcomes should force higher risk scores."""
+    llm_payload = (
+        '{"risk_score":22,"risk_level":"LOW","verdict":"Looks fine.",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["honeypot_simulation_status"] = "sell_quote_unavailable"
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 60
+    assert any(
+        "buy route but no sell route" in factor.lower()
+        for factor in result["top_risk_factors"]
+    )
+
+
+def test_calculate_risk_score_weights_creator_controlled_lp():
+    """Creator-controlled unlocked LP should increase score materially."""
+    llm_payload = (
+        '{"risk_score":30,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["lp_controls"] = {
+        "lp_locked": False,
+        "lp_burned": False,
+        "lp_unlocked_creator_controlled": True,
+    }
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 60
+    assert any(
+        "creator appears to control unlocked lp supply" in factor.lower()
+        for factor in result["top_risk_factors"]
+    )
+
+
+def test_calculate_risk_score_weights_bundle_launch_signal():
+    """Bundle launch suspicion should raise risk materially."""
+    llm_payload = (
+        '{"risk_score":28,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["bundle_launch_suspected"] = True
+    token_data["bundle_funded_by_creator_count"] = 4
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 53
+    assert result["bundle_launch_suspected"] is True
+
+
+def test_calculate_risk_score_weights_wash_trade_cycles():
+    """Detected wash trade cycles should increase score."""
+    llm_payload = (
+        '{"risk_score":25,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["wash_trade_cycle_count"] = 3
+    token_data["wash_trade_suspected"] = True
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 45
+    assert result["wash_trade_suspected"] is True

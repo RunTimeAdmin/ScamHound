@@ -568,8 +568,9 @@
             const creator = token.creator_username;
             const concentration = token.top_10_concentration;
             const walletAge = token.wallet_age_days;
-            const verdict = (token.ai_verdict || '').substring(0, 60);
-            const verdictTruncated = (token.ai_verdict || '').length > 60 ? '...' : '';
+            const verdictText = token.ai_verdict || token.verdict || '';
+            const verdict = verdictText.substring(0, 60);
+            const verdictTruncated = verdictText.length > 60 ? '...' : '';
             const scoredAt = token.scored_at ? token.scored_at.substring(0, 16) : '\u2014';
             const tokenMint = token.token_mint || '';
 

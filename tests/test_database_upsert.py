@@ -90,7 +90,64 @@ def test_save_score_persists_and_updates_llm_attempts(temp_database):
     assert updated["llm_attempts"] == 1
 
 
-def test_get_soak_audit_summary_reports_retry_and_unknown_signals(temp_database):
+def test_save_score_persists_security_check_fields(temp_database):
+    """Tier-1 security check fields should persist for dashboard visibility."""
+    mint = "MintChecks111111111111111111111111111111111"
+    score = _sample_score(mint, 52, "checks")
+    score["mint_authority_renounced"] = False
+    score["freeze_authority_renounced"] = True
+    score["is_token_2022"] = True
+    score["token_2022_extensions"] = ["TransferFeeConfig"]
+    score["lp_locked"] = False
+    score["lp_burned"] = False
+    score["honeypot_suspected"] = True
+    score["buy_count"] = 9
+    score["sell_count"] = 0
+    score["update_authority"] = "Update11111111111111111111111111111111"
+    score["transfer_fee_bps"] = 500
+    score["transfer_fee_max"] = 1000.0
+    score["permanent_delegate"] = "Delegate111111111111111111111111111111"
+    score["freeze_authority_whitelisted"] = False
+    score["honeypot_simulation_status"] = "high_round_trip_loss"
+    score["honeypot_round_trip_loss_pct"] = 82.1
+    score["bundle_launch_suspected"] = True
+    score["bundle_same_slot_or_window"] = True
+    score["bundle_amount_clustered"] = True
+    score["bundle_funded_by_creator_count"] = 4
+    score["wash_trade_cycle_count"] = 3
+    score["wash_trade_suspected"] = True
+
+    database.save_score(score)
+    row = database.get_token_score(mint)
+
+    assert row is not None
+    assert row["mint_authority_renounced"] == 0
+    assert row["freeze_authority_renounced"] == 1
+    assert row["is_token_2022"] == 1
+    assert row["token_2022_extensions"] == ["TransferFeeConfig"]
+    assert row["lp_locked"] == 0
+    assert row["lp_burned"] == 0
+    assert row["honeypot_suspected"] == 1
+    assert row["buy_count"] == 9
+    assert row["sell_count"] == 0
+    assert row["update_authority"] == score["update_authority"]
+    assert row["transfer_fee_bps"] == 500
+    assert row["transfer_fee_max"] == 1000.0
+    assert row["permanent_delegate"] == score["permanent_delegate"]
+    assert row["freeze_authority_whitelisted"] == 0
+    assert row["honeypot_simulation_status"] == "high_round_trip_loss"
+    assert row["honeypot_round_trip_loss_pct"] == 82.1
+    assert row["bundle_launch_suspected"] == 1
+    assert row["bundle_same_slot_or_window"] == 1
+    assert row["bundle_amount_clustered"] == 1
+    assert row["bundle_funded_by_creator_count"] == 4
+    assert row["wash_trade_cycle_count"] == 3
+    assert row["wash_trade_suspected"] == 1
+
+
+def test_soak_audit_summary_reports_retry_and_unknown_signals(
+    temp_database,
+):
     """Soak summary should reflect retry counts and unknown-data rates."""
     mint_a = "MintSoakA111111111111111111111111111111111"
     mint_b = "MintSoakB111111111111111111111111111111111"
@@ -125,12 +182,16 @@ def test_get_soak_audit_summary_reports_retry_and_unknown_signals(temp_database)
 
 def test_get_soak_audit_samples_applies_risk_filter(temp_database):
     """Soak samples should respect supported risk-level filters."""
-    low = _sample_score("MintSampleLow111111111111111111111111111111", 20, "ok")
+    low = _sample_score(
+        "MintSampleLow111111111111111111111111111111", 20, "ok"
+    )
     low["risk_level"] = "LOW"
     low["llm_attempts"] = 1
     database.save_score(low)
 
-    high = _sample_score("MintSampleHigh11111111111111111111111111111", 80, "ok")
+    high = _sample_score(
+        "MintSampleHigh11111111111111111111111111111", 80, "ok"
+    )
     high["risk_level"] = "HIGH"
     high["llm_attempts"] = 2
     database.save_score(high)

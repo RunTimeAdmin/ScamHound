@@ -9,6 +9,7 @@ from typing import Optional, Dict, List, Any
 import logging
 import concurrent.futures
 from datetime import datetime, timezone
+import statistics
 
 from .retry import request_with_retry
 
@@ -17,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.helius.xyz/v0"
 RPC_URL = "https://mainnet.helius-rpc.com"
+TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+# Legitimate compliance tokens that intentionally keep freeze authority.
+FREEZE_AUTHORITY_MINT_WHITELIST = {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoA9Pp5h5hN9fQf4yKs",  # USDT
+}
 
 # Known protocol/infrastructure addresses that should NOT be counted as "holders"
 # These are bonding curves, DEX pools, AMM vaults, and system programs
@@ -42,6 +51,18 @@ EXCLUDED_HOLDER_ADDRESSES = {
 
     # Meteora
     "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",  # Meteora DLMM
+}
+
+LP_BURN_ADDRESSES = {
+    "1nc1nerator11111111111111111111111111111111",
+    "11111111111111111111111111111111",
+}
+
+LP_LOCK_PROVIDER_ADDRESSES = {
+    # Common Solana lock destinations/providers.
+    "HfoTxFR1Tm6kGxU9r9kUS3X5L5qQkNoP9f8uQfJ4Yf2h": "streamflow",
+    "Timelock11111111111111111111111111111111111": "teamfinance_like",
+    "UniCrypt11111111111111111111111111111111111": "unicrypt_like",
 }
 
 _CREATOR_HISTORY_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -93,7 +114,7 @@ def _fetch_creator_transactions(
     return collected
 
 
-def _make_rpc_request(method: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _make_rpc_request(method: str, params: Any) -> Optional[Dict[str, Any]]:
     """Make a JSON-RPC request against the Helius mainnet RPC endpoint."""
     api_key = os.environ.get("HELIUS_API_KEY", "")
     if not api_key:
@@ -121,6 +142,334 @@ def _make_rpc_request(method: str, params: Dict[str, Any]) -> Optional[Dict[str,
         logger.error(f"[HELIUS] RPC error ({method}): {body['error']}")
         return None
     return body.get("result") if isinstance(body, dict) else None
+
+
+def _extract_token_extensions(parsed_info: Dict[str, Any]) -> List[str]:
+    """Extract Token-2022 extension names from parsed mint account payload."""
+    extensions: List[str] = []
+    candidates = [
+        parsed_info.get("extensions"),
+        parsed_info.get("extensionTypes"),
+        parsed_info.get("tlvData"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            for entry in candidate:
+                if isinstance(entry, str):
+                    name = entry.strip()
+                elif isinstance(entry, dict):
+                    name = (
+                        entry.get("extension")
+                        or entry.get("type")
+                        or entry.get("name")
+                        or ""
+                    )
+                    name = str(name).strip()
+                else:
+                    name = ""
+                if name and name not in extensions:
+                    extensions.append(name)
+    return extensions
+
+
+def _extract_transfer_fee_config(parsed_info: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract Token-2022 transfer fee config if present."""
+    config = {"transfer_fee_bps": None, "transfer_fee_max": None}
+    extension_blocks = parsed_info.get("extensions")
+    if not isinstance(extension_blocks, list):
+        return config
+
+    for entry in extension_blocks:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("extension") or entry.get("type") or "").lower()
+        if "transferfee" not in name:
+            continue
+
+        state = entry.get("state") if isinstance(entry.get("state"), dict) else entry
+        bps = (
+            state.get("transferFeeBasisPoints")
+            or state.get("transfer_fee_basis_points")
+            or state.get("basisPoints")
+            or state.get("bps")
+        )
+        max_fee = (
+            state.get("maximumFee")
+            or state.get("maximum_fee")
+            or state.get("maxFee")
+            or state.get("max_fee")
+        )
+        try:
+            config["transfer_fee_bps"] = int(float(bps))
+        except (TypeError, ValueError):
+            config["transfer_fee_bps"] = None
+        try:
+            config["transfer_fee_max"] = float(max_fee)
+        except (TypeError, ValueError):
+            config["transfer_fee_max"] = None
+        return config
+
+    return config
+
+
+def _extract_permanent_delegate(parsed_info: Dict[str, Any]) -> Optional[str]:
+    """Extract Token-2022 permanent delegate address when configured."""
+    extension_blocks = parsed_info.get("extensions")
+    if not isinstance(extension_blocks, list):
+        return None
+
+    for entry in extension_blocks:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("extension") or entry.get("type") or "").lower()
+        if "permanentdelegate" not in name:
+            continue
+        state = entry.get("state") if isinstance(entry.get("state"), dict) else entry
+        delegate = (
+            state.get("delegate")
+            or state.get("permanentDelegate")
+            or state.get("permanent_delegate")
+        )
+        return str(delegate).strip() if delegate else None
+    return None
+
+
+def _get_update_authority(token_mint: str) -> Optional[str]:
+    """Fetch update authority from asset metadata when available."""
+    asset = _make_rpc_request("getAsset", {"id": token_mint})
+    if not isinstance(asset, dict):
+        return None
+
+    metadata = asset.get("content", {}).get("metadata", {})
+    if isinstance(metadata, dict):
+        candidate = (
+            metadata.get("updateAuthority")
+            or metadata.get("update_authority")
+        )
+        if candidate:
+            return str(candidate)
+
+    authorities = asset.get("authorities")
+    if isinstance(authorities, list):
+        for entry in authorities:
+            if not isinstance(entry, dict):
+                continue
+            scope = str(entry.get("scope") or "").lower()
+            if scope in {"full", "metadata", "update"}:
+                address = entry.get("address")
+                if address:
+                    return str(address)
+    return None
+
+
+def get_token_security_signals(token_mint: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch on-chain token control signals from mint account metadata.
+
+    Returns mint/freeze authority state and Token-2022 extension footprint.
+    """
+    result = _make_rpc_request(
+        "getAccountInfo",
+        [token_mint, {"encoding": "jsonParsed"}],
+    )
+    value = (result or {}).get("value") if isinstance(result, dict) else None
+    if not isinstance(value, dict):
+        return None
+
+    owner_program = str(value.get("owner") or "")
+    data = value.get("data")
+    if not isinstance(data, dict):
+        return None
+    parsed = data.get("parsed")
+    if not isinstance(parsed, dict):
+        return None
+    parsed_info = parsed.get("info")
+    if not isinstance(parsed_info, dict):
+        return None
+
+    mint_authority = parsed_info.get("mintAuthority")
+    freeze_authority = parsed_info.get("freezeAuthority")
+    token_extensions = _extract_token_extensions(parsed_info)
+    transfer_fee = _extract_transfer_fee_config(parsed_info)
+    permanent_delegate = _extract_permanent_delegate(parsed_info)
+    update_authority = _get_update_authority(token_mint)
+    is_token_2022 = (
+        owner_program == TOKEN_2022_PROGRAM_ID
+        or str(parsed.get("type") or "").lower() == "mint2022"
+        or bool(token_extensions)
+    )
+    freeze_whitelisted = token_mint in FREEZE_AUTHORITY_MINT_WHITELIST
+
+    return {
+        "mint_authority": mint_authority,
+        "mint_authority_renounced": mint_authority in (None, ""),
+        "freeze_authority": freeze_authority,
+        "freeze_authority_renounced": freeze_authority in (None, ""),
+        "freeze_authority_whitelisted": freeze_whitelisted,
+        "freeze_authority_high_risk": bool(
+            freeze_authority not in (None, "") and not freeze_whitelisted
+        ),
+        "update_authority": update_authority,
+        "token_program_owner": owner_program,
+        "is_token_2022": is_token_2022,
+        "token_2022_extensions": token_extensions,
+        "transfer_fee_bps": transfer_fee["transfer_fee_bps"],
+        "transfer_fee_max": transfer_fee["transfer_fee_max"],
+        "permanent_delegate": permanent_delegate,
+        "uses_standard_token_program": owner_program == TOKEN_PROGRAM_ID,
+    }
+
+
+def analyze_lp_token_controls(
+    lp_mint: str,
+    creator_wallet: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Analyze LP token holder distribution for burn/lock/creator control.
+
+    This is an approximation using known burn and locker addresses.
+    """
+    holders = get_token_holders(lp_mint, limit=30)
+    if not holders:
+        return {
+            "checked": False,
+            "lp_locked": None,
+            "lp_burned": None,
+            "lp_unlocked_creator_controlled": None,
+            "lp_burned_share_pct": None,
+            "lp_locked_share_pct": None,
+            "lp_creator_share_pct": None,
+        }
+
+    top_holders = holders.get("top_holders", [])
+    burned_share = 0.0
+    locked_share = 0.0
+    creator_share = 0.0
+
+    for holder in top_holders:
+        address = str(holder.get("address") or "")
+        pct = float(holder.get("percentage") or 0.0)
+        if address in LP_BURN_ADDRESSES:
+            burned_share += pct
+        if address in LP_LOCK_PROVIDER_ADDRESSES:
+            locked_share += pct
+        if creator_wallet and address == creator_wallet:
+            creator_share += pct
+
+    lp_burned = burned_share >= 90.0
+    lp_locked = locked_share >= 50.0 or lp_burned
+    lp_unlocked_creator_controlled = (
+        creator_share >= 50.0 and not lp_locked and burned_share < 10.0
+    )
+
+    return {
+        "checked": True,
+        "lp_locked": lp_locked,
+        "lp_burned": lp_burned,
+        "lp_unlocked_creator_controlled": lp_unlocked_creator_controlled,
+        "lp_burned_share_pct": round(burned_share, 2),
+        "lp_locked_share_pct": round(locked_share, 2),
+        "lp_creator_share_pct": round(creator_share, 2),
+    }
+
+
+def analyze_bundle_launch(
+    creator_wallet: Optional[str],
+    recent_buy_wallets: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Detect likely coordinated bundle/snipe launch behavior.
+
+    Signals:
+    - clustered buys in same/near slots or tight time window
+    - similar buy sizes
+    - buyer wallets funded by creator shortly before launch
+    """
+    buys = [b for b in (recent_buy_wallets or []) if isinstance(b, dict)]
+    if not creator_wallet or len(buys) < 5:
+        return {
+            "checked": False,
+            "bundle_launch_suspected": False,
+            "bundle_same_slot_or_window": False,
+            "bundle_amount_clustered": False,
+            "bundle_funded_by_creator_count": 0,
+            "bundle_buy_wallet_count": len(buys),
+            "bundle_triggered_signals": 0,
+        }
+
+    first_buys = buys[:10]
+    slots = [b.get("slot") for b in first_buys if isinstance(b.get("slot"), int)]
+    timestamps = [
+        b.get("timestamp")
+        for b in first_buys
+        if isinstance(b.get("timestamp"), int)
+    ]
+    amounts = [
+        float(b.get("amount_usd") or 0.0)
+        for b in first_buys
+        if float(b.get("amount_usd") or 0.0) > 0
+    ]
+
+    slot_cluster = len(slots) >= 5 and (max(slots) - min(slots) <= 5)
+    time_cluster = (
+        len(timestamps) >= 5 and (max(timestamps) - min(timestamps) <= 120)
+    )
+    same_slot_or_window = slot_cluster or time_cluster
+
+    amount_clustered = False
+    if len(amounts) >= 5:
+        mean_amount = statistics.fmean(amounts)
+        if mean_amount > 0:
+            stdev = statistics.pstdev(amounts)
+            amount_clustered = (stdev / mean_amount) <= 0.35
+
+    earliest_buy_ts = min(timestamps) if timestamps else None
+    funded_by_creator_count = 0
+    seen_wallets = set()
+    for buy in first_buys:
+        wallet = str(buy.get("wallet") or "").strip()
+        if not wallet or wallet in seen_wallets:
+            continue
+        seen_wallets.add(wallet)
+
+        txs = get_wallet_transaction_history(wallet, limit=30)
+        for tx in txs:
+            tx_ts = tx.get("timestamp")
+            native = tx.get("nativeTransfers", [])
+            if not isinstance(native, list):
+                continue
+            matched = False
+            for transfer in native:
+                if not isinstance(transfer, dict):
+                    continue
+                if transfer.get("toUserAccount") != wallet:
+                    continue
+                if transfer.get("fromUserAccount") != creator_wallet:
+                    continue
+                if (
+                    isinstance(tx_ts, int)
+                    and earliest_buy_ts is not None
+                    and 0 <= earliest_buy_ts - tx_ts <= 3600
+                ):
+                    matched = True
+                    break
+            if matched:
+                funded_by_creator_count += 1
+                break
+
+    funded_signal = funded_by_creator_count >= 3
+    triggered = sum([same_slot_or_window, amount_clustered, funded_signal])
+    suspected = triggered >= 2
+
+    return {
+        "checked": True,
+        "bundle_launch_suspected": suspected,
+        "bundle_same_slot_or_window": same_slot_or_window,
+        "bundle_amount_clustered": amount_clustered,
+        "bundle_funded_by_creator_count": funded_by_creator_count,
+        "bundle_buy_wallet_count": len(first_buys),
+        "bundle_triggered_signals": triggered,
+    }
 
 
 def _derive_wallet_age_days(transactions: List[Dict[str, Any]]) -> int:

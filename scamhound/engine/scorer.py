@@ -300,6 +300,222 @@ def _sanitize_risk_factors(
     return sanitized[:5]
 
 
+def _sanitize_safe_signals(
+    signals: list[str], token_data: Dict[str, Any]
+) -> list[str]:
+    """Drop safe claims that are unsupported when key source data is missing."""
+    creator_wallet = token_data.get("creator", {}).get("wallet")
+    wallet_age_days = token_data.get("wallet_age_days")
+    has_creator_wallet = _has_known_value(creator_wallet)
+    has_wallet_age = isinstance(wallet_age_days, (int, float)) and wallet_age_days >= 0
+
+    sanitized = []
+    for signal in signals:
+        text = signal.strip()
+        lower = text.lower()
+        if "no prior rug" in lower and not has_creator_wallet:
+            continue
+        if "no creator history" in lower and (not has_creator_wallet or not has_wallet_age):
+            continue
+        sanitized.append(text)
+    return sanitized[:5]
+
+
+def _has_known_value(value: Any) -> bool:
+    """Return True when value is present and not an unknown placeholder."""
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text not in {"", "unknown", "none", "n/a", "-"}
+
+
+def _apply_due_diligence_guard(
+    score_data: Dict[str, Any], token_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Avoid overconfident low-risk scores when core diligence data is missing."""
+    unknown_count = 0
+
+    if "token_age_minutes" in token_data:
+        token_age_minutes = token_data.get("token_age_minutes")
+        if not isinstance(token_age_minutes, (int, float)):
+            unknown_count += 1
+
+    if "wallet_age_days" in token_data:
+        wallet_age_days = token_data.get("wallet_age_days")
+        if not isinstance(wallet_age_days, (int, float)) or wallet_age_days < 0:
+            unknown_count += 1
+
+    creator = token_data.get("creator", {})
+    if isinstance(creator, dict) and "wallet" in creator:
+        creator_wallet = creator.get("wallet")
+        if not _has_known_value(creator_wallet):
+            unknown_count += 1
+
+    if "unique_trader_count" in token_data:
+        unique_traders = token_data.get("unique_trader_count")
+        if not isinstance(unique_traders, (int, float)) or unique_traders <= 0:
+            unknown_count += 1
+    floor = 0
+    if unknown_count >= 3:
+        floor = 45
+    elif unknown_count >= 1:
+        floor = 35
+
+    if floor and score_data["risk_score"] < floor:
+        score_data["risk_score"] = floor
+        score_data["risk_level"] = _risk_level_from_score(floor)
+
+    if unknown_count >= 2:
+        coverage_note = (
+            "Limited due diligence data coverage (missing token age, creator age, "
+            "or trading activity signals)."
+        )
+        factors = list(score_data.get("top_risk_factors", []))
+        if coverage_note not in factors:
+            factors.append(coverage_note)
+            score_data["top_risk_factors"] = factors[:5]
+
+        verdict = str(score_data.get("verdict") or "").strip()
+        if "limited due diligence data coverage" not in verdict.lower():
+            if verdict and not verdict.endswith("."):
+                verdict += "."
+            score_data["verdict"] = (
+                f"{verdict} Confidence is limited due to missing due diligence data."
+            ).strip()
+
+    return score_data
+
+
+def _apply_security_control_weights(
+    score_data: Dict[str, Any], token_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Apply deterministic risk weights for hard security controls."""
+    security = token_data.get("security", {})
+    lp_controls = token_data.get("lp_controls", {})
+    creator_wallet = token_data.get("creator", {}).get("wallet")
+
+    additions = 0
+    enforced_factors: list[str] = []
+
+    mint_renounced = security.get("mint_authority_renounced")
+    if mint_renounced is False:
+        additions += 25
+        enforced_factors.append(
+            "Mint authority is active; token supply can be inflated."
+        )
+
+    freeze_renounced = security.get("freeze_authority_renounced")
+    freeze_whitelisted = bool(security.get("freeze_authority_whitelisted", False))
+    if freeze_renounced is False and not freeze_whitelisted:
+        additions += 30
+        enforced_factors.append(
+            "Freeze authority is active for a non-whitelisted mint."
+        )
+
+    permanent_delegate = security.get("permanent_delegate")
+    if _has_known_value(permanent_delegate):
+        additions += 20
+        enforced_factors.append(
+            "Token has a permanent delegate with transfer control powers."
+        )
+
+    transfer_fee_bps = security.get("transfer_fee_bps")
+    if isinstance(transfer_fee_bps, (int, float)):
+        if transfer_fee_bps >= 3000:
+            additions += 30
+            enforced_factors.append(
+                f"Extreme transfer fee configured ({int(transfer_fee_bps)} bps)."
+            )
+        elif transfer_fee_bps >= 500:
+            additions += 15
+            enforced_factors.append(
+                f"Elevated transfer fee configured ({int(transfer_fee_bps)} bps)."
+            )
+
+    token_extensions = security.get("token_2022_extensions", [])
+    risky_ext = {
+        "transferhook",
+        "nontransferable",
+        "mintcloseauthority",
+        "interestbearingmint",
+    }
+    normalized_ext = {str(x).lower() for x in token_extensions}
+    matched = [ext for ext in risky_ext if any(ext in e for e in normalized_ext)]
+    if matched:
+        additions += 10
+        enforced_factors.append(
+            "Token-2022 risky extension footprint detected: "
+            + ", ".join(sorted(matched))
+            + "."
+        )
+
+    lp_locked = lp_controls.get("lp_locked")
+    lp_burned = lp_controls.get("lp_burned")
+    lp_unlocked_creator_controlled = lp_controls.get(
+        "lp_unlocked_creator_controlled"
+    )
+    if lp_locked is False and lp_burned is False:
+        additions += 15
+        enforced_factors.append(
+            "LP appears unlocked and unburned based on available metadata."
+        )
+    if lp_unlocked_creator_controlled:
+        additions += 30
+        enforced_factors.append(
+            "Creator appears to control unlocked LP supply."
+        )
+
+    if bool(token_data.get("honeypot_suspected")):
+        additions += 25
+        enforced_factors.append(
+            "Trade-flow heuristic indicates potential sell restriction/honeypot."
+        )
+
+    simulation_status = str(token_data.get("honeypot_simulation_status") or "")
+    if simulation_status == "sell_quote_unavailable":
+        additions += 40
+        enforced_factors.append(
+            "Jupiter round-trip check found buy route but no sell route."
+        )
+    elif simulation_status == "high_round_trip_loss":
+        additions += 35
+        enforced_factors.append(
+            "Jupiter round-trip check indicates extreme immediate sell loss."
+        )
+
+    if bool(token_data.get("bundle_launch_suspected")):
+        additions += 25
+        enforced_factors.append(
+            "Launch activity resembles coordinated wallet bundle/sniping."
+        )
+
+    wash_cycle_count = int(token_data.get("wash_trade_cycle_count", 0) or 0)
+    if bool(token_data.get("wash_trade_suspected")) or wash_cycle_count >= 2:
+        additions += 20
+        enforced_factors.append(
+            "Detected repeated wallet-to-wallet round-trip wash-trade cycles."
+        )
+
+    update_authority = security.get("update_authority")
+    if _has_known_value(update_authority) and _has_known_value(creator_wallet):
+        if str(update_authority) == str(creator_wallet):
+            additions += 15
+            enforced_factors.append(
+                "Metadata update authority is controlled by creator wallet."
+            )
+
+    if additions > 0:
+        score_data["risk_score"] = min(100, score_data["risk_score"] + additions)
+        score_data["risk_level"] = _risk_level_from_score(score_data["risk_score"])
+        current = list(score_data.get("top_risk_factors", []))
+        for factor in enforced_factors:
+            if factor not in current:
+                current.append(factor)
+        score_data["top_risk_factors"] = current[:5]
+
+    return score_data
+
+
 
 SYSTEM_PROMPT = """You are ScamHound, an expert crypto security analyst specializing in rug pull detection on the Solana blockchain. You analyze token data and return a structured risk assessment.
 
@@ -335,6 +551,12 @@ Key risk factors to weigh heavily (adjusted for token age):
 - Creator wallet age <7 days = critical, <30 days = high (ALWAYS matters)
 - Any prior rug pulls from wallet = critical (ALWAYS matters)
 - Holder wallet clustering score >0.6 = critical, >0.4 = high (ALWAYS matters - creator controlling multiple wallets is suspicious even for new tokens)
+- Mint authority not renounced = elevated rug risk (supply can be inflated)
+- Freeze authority not renounced = elevated control/censorship risk
+- Token-2022 with dangerous extensions (transfer hooks, permanent delegate, transfer fees) = increased complexity/risk
+- LP unlocked/unburned when lock evidence exists = elevated exit-liquidity risk
+- Buy-heavy / zero-sell flow with enough traders can indicate sell restrictions (honeypot-like behavior)
+- Jupiter round-trip buy/sell simulation failure is a critical honeypot signal
 - Liquidity/MCap ratio <0.05 = critical, <0.10 = high (ONLY if token > 1 hour old)
 - Two-sided trader activity ratio >0.7 = critical, >0.5 = high (heuristic signal only; not definitive manipulation proof)
 - Large sell pressure = high
@@ -409,6 +631,43 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     )
     large_sell = token_data.get("large_sell_pressure", False)
     lifetime_fees = token_data.get("lifetime_fees_sol", 0)
+    honeypot_suspected = bool(token_data.get("honeypot_suspected", False))
+    buy_count = int(token_data.get("buy_count", 0) or 0)
+    sell_count = int(token_data.get("sell_count", 0) or 0)
+    honeypot_simulation_status = token_data.get("honeypot_simulation_status")
+    honeypot_round_trip_loss_pct = token_data.get("honeypot_round_trip_loss_pct")
+    bundle_launch_suspected = token_data.get("bundle_launch_suspected")
+    bundle_same_slot_or_window = token_data.get("bundle_same_slot_or_window")
+    bundle_amount_clustered = token_data.get("bundle_amount_clustered")
+    bundle_funded_by_creator_count = token_data.get(
+        "bundle_funded_by_creator_count"
+    )
+    wash_trade_cycle_count = token_data.get("wash_trade_cycle_count")
+    wash_trade_suspected = token_data.get("wash_trade_suspected")
+
+    # Token security controls
+    security = token_data.get("security", {})
+    mint_authority_renounced = security.get("mint_authority_renounced")
+    freeze_authority_renounced = security.get("freeze_authority_renounced")
+    is_token_2022 = bool(security.get("is_token_2022", False))
+    token_2022_extensions = security.get("token_2022_extensions", [])
+    token_program_owner = security.get("token_program_owner", "Unknown")
+    update_authority = security.get("update_authority")
+    transfer_fee_bps = security.get("transfer_fee_bps")
+    transfer_fee_max = security.get("transfer_fee_max")
+    permanent_delegate = security.get("permanent_delegate")
+    freeze_authority_whitelisted = security.get("freeze_authority_whitelisted")
+    freeze_authority_high_risk = security.get("freeze_authority_high_risk")
+
+    lp_controls = token_data.get("lp_controls", {})
+    lp_locked = lp_controls.get("lp_locked")
+    lp_burned = lp_controls.get("lp_burned")
+    lp_unlocked_creator_controlled = lp_controls.get(
+        "lp_unlocked_creator_controlled"
+    )
+    lp_burned_share_pct = lp_controls.get("lp_burned_share_pct")
+    lp_locked_share_pct = lp_controls.get("lp_locked_share_pct")
+    lp_creator_share_pct = lp_controls.get("lp_creator_share_pct")
     
     # BubbleMaps data
     bubblemaps = token_data.get("bubblemaps", {})
@@ -508,6 +767,35 @@ MARKET DATA (Birdeye):
 - Unique traders (24h): {unique_traders}
 - Two-sided trader activity ratio (0.0-1.0, heuristic): {two_sided_ratio}
 - Large sell pressure detected: {large_sell}
+- Recent buys: {buy_count}
+- Recent sells: {sell_count}
+- Honeypot suspected from trade flow heuristic: {honeypot_suspected}
+- Honeypot simulation status: {honeypot_simulation_status}
+- Honeypot round-trip loss %: {honeypot_round_trip_loss_pct}
+- Bundle launch suspected: {bundle_launch_suspected}
+- Buys clustered in slot/time window: {bundle_same_slot_or_window}
+- Buy amounts clustered: {bundle_amount_clustered}
+- Buyer wallets funded by creator (count): {bundle_funded_by_creator_count}
+- Wash-trade cycle count: {wash_trade_cycle_count}
+- Wash-trade suspected: {wash_trade_suspected}
+
+TOKEN SECURITY CONTROLS (On-chain):
+- Mint authority renounced: {mint_authority_renounced}
+- Freeze authority renounced: {freeze_authority_renounced}
+- Token-2022 mint: {is_token_2022}
+- Token program owner: {token_program_owner}
+- Token-2022 extensions: {token_2022_extensions}
+- Metadata update authority: {update_authority}
+- Transfer fee bps/max: {transfer_fee_bps} / {transfer_fee_max}
+- Permanent delegate: {permanent_delegate}
+- Freeze authority whitelisted mint: {freeze_authority_whitelisted}
+- Freeze authority high risk flag: {freeze_authority_high_risk}
+- LP locked (if detected): {lp_locked}
+- LP burned (if detected): {lp_burned}
+- LP burned share %: {lp_burned_share_pct}
+- LP locked share %: {lp_locked_share_pct}
+- LP creator-held share %: {lp_creator_share_pct}
+- LP unlocked and creator-controlled: {lp_unlocked_creator_controlled}
 
 Respond with JSON only."""
 
@@ -557,6 +845,7 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
             safe_signals = _normalize_string_list(
                 result.get("top_safe_signals", []), max_items=5, max_item_length=200
             )
+            safe_signals = _sanitize_safe_signals(safe_signals, token_data)
 
             score_data = {
                 "token_mint": token_data.get("token_mint"),
@@ -583,7 +872,74 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
                 "created_at": token_data.get("created_at"),
                 "score_source": f"ai_{provider}",
                 "llm_attempts": attempt + 1,
+                "mint_authority_renounced": token_data.get(
+                    "security", {}
+                ).get("mint_authority_renounced"),
+                "freeze_authority_renounced": token_data.get(
+                    "security", {}
+                ).get("freeze_authority_renounced"),
+                "is_token_2022": token_data.get("security", {}).get(
+                    "is_token_2022"
+                ),
+                "token_2022_extensions": token_data.get(
+                    "security", {}
+                ).get("token_2022_extensions", []),
+                "lp_locked": token_data.get("lp_controls", {}).get("lp_locked"),
+                "lp_burned": token_data.get("lp_controls", {}).get("lp_burned"),
+                "honeypot_suspected": token_data.get("honeypot_suspected"),
+                "buy_count": token_data.get("buy_count"),
+                "sell_count": token_data.get("sell_count"),
+                "honeypot_simulation_status": token_data.get(
+                    "honeypot_simulation_status"
+                ),
+                "honeypot_round_trip_loss_pct": token_data.get(
+                    "honeypot_round_trip_loss_pct"
+                ),
+                "bundle_launch_suspected": token_data.get(
+                    "bundle_launch_suspected"
+                ),
+                "bundle_same_slot_or_window": token_data.get(
+                    "bundle_same_slot_or_window"
+                ),
+                "bundle_amount_clustered": token_data.get(
+                    "bundle_amount_clustered"
+                ),
+                "bundle_funded_by_creator_count": token_data.get(
+                    "bundle_funded_by_creator_count"
+                ),
+                "wash_trade_cycle_count": token_data.get(
+                    "wash_trade_cycle_count"
+                ),
+                "wash_trade_suspected": token_data.get(
+                    "wash_trade_suspected"
+                ),
+                "bundle_launch_suspected": token_data.get(
+                    "bundle_launch_suspected"
+                ),
+                "bundle_same_slot_or_window": token_data.get(
+                    "bundle_same_slot_or_window"
+                ),
+                "bundle_amount_clustered": token_data.get(
+                    "bundle_amount_clustered"
+                ),
+                "update_authority": token_data.get("security", {}).get(
+                    "update_authority"
+                ),
+                "transfer_fee_bps": token_data.get("security", {}).get(
+                    "transfer_fee_bps"
+                ),
+                "transfer_fee_max": token_data.get("security", {}).get(
+                    "transfer_fee_max"
+                ),
+                "permanent_delegate": token_data.get("security", {}).get(
+                    "permanent_delegate"
+                ),
+                "freeze_authority_whitelisted": token_data.get(
+                    "security", {}
+                ).get("freeze_authority_whitelisted"),
             }
+            score_data = _apply_security_control_weights(score_data, token_data)
+            score_data = _apply_due_diligence_guard(score_data, token_data)
 
             logger.info(
                 f"[SCAMHOUND] {score_data['symbol']} | Score: "
@@ -647,4 +1003,67 @@ def _fallback_score(
         "created_at": token_data.get("created_at"),
         "score_source": "fallback",
         "llm_attempts": attempts,
+        "mint_authority_renounced": token_data.get("security", {}).get(
+            "mint_authority_renounced"
+        ),
+        "freeze_authority_renounced": token_data.get("security", {}).get(
+            "freeze_authority_renounced"
+        ),
+        "is_token_2022": token_data.get("security", {}).get("is_token_2022"),
+        "token_2022_extensions": token_data.get(
+            "security", {}
+        ).get("token_2022_extensions", []),
+        "lp_locked": token_data.get("lp_controls", {}).get("lp_locked"),
+        "lp_burned": token_data.get("lp_controls", {}).get("lp_burned"),
+        "honeypot_suspected": token_data.get("honeypot_suspected"),
+        "buy_count": token_data.get("buy_count"),
+        "sell_count": token_data.get("sell_count"),
+        "honeypot_simulation_status": token_data.get(
+            "honeypot_simulation_status"
+        ),
+        "honeypot_round_trip_loss_pct": token_data.get(
+            "honeypot_round_trip_loss_pct"
+        ),
+        "bundle_launch_suspected": token_data.get(
+            "bundle_launch_suspected"
+        ),
+        "bundle_same_slot_or_window": token_data.get(
+            "bundle_same_slot_or_window"
+        ),
+        "bundle_amount_clustered": token_data.get(
+            "bundle_amount_clustered"
+        ),
+        "bundle_funded_by_creator_count": token_data.get(
+            "bundle_funded_by_creator_count"
+        ),
+        "wash_trade_cycle_count": token_data.get(
+            "wash_trade_cycle_count"
+        ),
+        "wash_trade_suspected": token_data.get(
+            "wash_trade_suspected"
+        ),
+        "bundle_launch_suspected": token_data.get(
+            "bundle_launch_suspected"
+        ),
+        "bundle_same_slot_or_window": token_data.get(
+            "bundle_same_slot_or_window"
+        ),
+        "bundle_amount_clustered": token_data.get(
+            "bundle_amount_clustered"
+        ),
+        "update_authority": token_data.get("security", {}).get(
+            "update_authority"
+        ),
+        "transfer_fee_bps": token_data.get("security", {}).get(
+            "transfer_fee_bps"
+        ),
+        "transfer_fee_max": token_data.get("security", {}).get(
+            "transfer_fee_max"
+        ),
+        "permanent_delegate": token_data.get("security", {}).get(
+            "permanent_delegate"
+        ),
+        "freeze_authority_whitelisted": token_data.get("security", {}).get(
+            "freeze_authority_whitelisted"
+        ),
     }
