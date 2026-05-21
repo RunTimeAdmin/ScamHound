@@ -1027,6 +1027,14 @@ def validate_api_key(raw_key: str) -> Optional[dict]:
 
 def increment_api_key_usage(key_id: int, endpoint: str, status_code: int = 200, response_ms: int = 0, count: int = 1):
     """Increment usage counters and log the request."""
+    if os.getenv("SCAMHOUND_SOAK_MODE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
+
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
 

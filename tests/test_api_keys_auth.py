@@ -198,3 +198,23 @@ def test_batch_scan_charges_only_for_queued_work(fastapi_test_client):
     increment_usage.assert_called_once_with(
         key_row["id"], "/api/scan/batch", count=1
     )
+
+
+def test_increment_api_key_usage_skips_charging_in_soak_mode(tmp_path):
+    """Soak mode should prevent usage counter increments."""
+    from engine import database
+
+    db_path = tmp_path / "test_soak_mode_usage.db"
+    with patch("engine.database.DB_PATH", str(db_path)):
+        database.init_db()
+        created = database.create_api_key("soak@example.com", tier="builder")
+        key_row = database.validate_api_key(created["key"])
+        assert key_row is not None
+
+        with patch.dict("os.environ", {"SCAMHOUND_SOAK_MODE": "true"}, clear=False):
+            database.increment_api_key_usage(key_row["id"], "/api/scan", count=5)
+
+        refreshed = database.validate_api_key(created["key"])
+        assert refreshed is not None
+        assert refreshed["calls_today"] == 0
+        assert refreshed["calls_total"] == 0
