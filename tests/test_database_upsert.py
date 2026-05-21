@@ -66,3 +66,25 @@ def test_save_score_upsert_preserves_existing_user_id(temp_database):
     assert row is not None
     assert row["user_id"] == 42
     assert row["risk_score"] == 65
+
+
+def test_save_score_persists_and_updates_llm_attempts(temp_database):
+    """llm_attempts should persist and update across rescoring."""
+    mint = "MintAttempts11111111111111111111111111111111"
+
+    first = _sample_score(mint, 62, "first")
+    first["llm_attempts"] = 3
+    database.save_score(first)
+
+    row = database.get_token_score(mint)
+    assert row is not None
+    assert row["llm_attempts"] == 3
+
+    rescored = _sample_score(mint, 70, "rescored")
+    rescored["llm_attempts"] = 1
+    database.save_score(rescored)
+
+    updated = database.get_token_score(mint)
+    assert updated is not None
+    assert updated["risk_score"] == 70
+    assert updated["llm_attempts"] == 1

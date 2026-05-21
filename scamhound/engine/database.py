@@ -253,6 +253,12 @@ def init_db() -> None:
     except sqlite3.OperationalError:
         pass  # Column already exists
 
+    # Add llm_attempts column for retry telemetry if not exists
+    try:
+        cursor.execute("ALTER TABLE scored_tokens ADD COLUMN llm_attempts INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     conn.commit()
     conn.close()
     print("[SCAMHOUND] Database initialized")
@@ -408,8 +414,8 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
             top_risk_factors, top_safe_signals, top_10_concentration,
             creator_wallet, creator_username, prior_launches, wallet_age_days,
             clustering_score, liquidity_usd, lifetime_fees_sol, created_at, score_source,
-            platform, user_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            platform, user_id, llm_attempts
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(token_mint) DO UPDATE SET
             name = excluded.name,
             symbol = excluded.symbol,
@@ -430,6 +436,7 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
             score_source = excluded.score_source,
             platform = excluded.platform,
             user_id = COALESCE(excluded.user_id, scored_tokens.user_id),
+            llm_attempts = excluded.llm_attempts,
             scored_at = CURRENT_TIMESTAMP
     """, (
         score_data.get("token_mint"),
@@ -452,6 +459,7 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
         source,
         platform,
         score_data.get("user_id"),
+        score_data.get("llm_attempts", 1),
     ))
     
     # Append to score history
