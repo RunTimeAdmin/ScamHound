@@ -112,7 +112,7 @@ def test_calculate_risk_score_sanitizes_age_and_unknown_data_claims():
 
 
 def test_calculate_risk_score_removes_missing_bubblemaps_as_risk_factor():
-    """Missing BubbleMaps data should never be counted as a risk factor."""
+    """Missing BubbleMaps data is never a risk factor."""
     llm_payload = (
         '{"risk_score":58,"risk_level":"MEDIUM","verdict":"ok",'
         '"top_risk_factors":["No BubbleMaps data available for cluster analysis",'
@@ -276,8 +276,32 @@ def test_calculate_risk_score_applies_due_diligence_floor_on_missing_data():
     assert "missing due diligence data" in result["verdict"].lower()
 
 
+def test_due_diligence_guard_softens_overconfident_safe_verdict():
+    """Missing core signals should block 'legitimate/no red flags' phrasing."""
+    llm_payload = (
+        '{"risk_score":20,"risk_level":"LOW",'
+        '"verdict":"Appears to be a legitimate token with no significant red '
+        'flags. Overall low risk. No prior rug pulls detected.",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["creator"] = {"wallet": "Unknown"}
+    token_data["wallet_age_days"] = -1
+    token_data["token_age_minutes"] = None
+    token_data["unique_trader_count"] = 0
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    verdict = result["verdict"]
+    assert verdict.startswith("Core diligence signals are incomplete")
+    assert "missing due diligence data" in verdict.lower()
+    assert result["risk_score"] == 45
+
+
 def test_calculate_risk_score_applies_authority_security_weights():
-    """Hard authority controls should increase score independent of LLM output."""
+    """Hard authority controls should increase score beyond LLM output."""
     llm_payload = (
         '{"risk_score":15,"risk_level":"LOW","verdict":"Looks clean.",'
         '"top_risk_factors":[],"top_safe_signals":[]}'

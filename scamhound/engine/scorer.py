@@ -375,13 +375,11 @@ def _apply_due_diligence_guard(
             factors.append(coverage_note)
             score_data["top_risk_factors"] = factors[:5]
 
-        verdict = str(score_data.get("verdict") or "").strip()
-        if "limited due diligence data coverage" not in verdict.lower():
-            if verdict and not verdict.endswith("."):
-                verdict += "."
-            score_data["verdict"] = (
-                f"{verdict} Confidence is limited due to missing due diligence data."
-            ).strip()
+        score_data["verdict"] = (
+            "Core diligence signals are incomplete, so this token cannot be "
+            "confidently classified as low risk yet. "
+            "Confidence is limited due to missing due diligence data."
+        )
 
     return score_data
 

@@ -439,7 +439,7 @@
             <h4>📋 Embed This Badge</h4>
             <p>Copy this code to embed the ScamHound risk badge on your site:</p>
             <code class="embed-code">
-                <iframe src="https://your-domain.com/widget/{{ token.token_mint }}" width="300" height="80" frameborder="0"></iframe>
+                <iframe src="{{ request.base_url }}widget/{{ token.token_mint }}" width="300" height="80" frameborder="0"></iframe>
             </code>
         </div>
 
