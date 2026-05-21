@@ -569,3 +569,71 @@ def test_calculate_risk_score_weights_explosive_holder_velocity_band():
 
     assert result["risk_score"] >= 45
     assert result["holder_velocity_band"] == "explosive"
+
+
+def test_calculate_risk_score_weights_genesis_funding_cluster():
+    """Large same-source funding cluster should add deterministic risk."""
+    llm_payload = (
+        '{"risk_score":32,"risk_level":"MEDIUM","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["largest_funding_cluster_supply_pct"] = 24.0
+    token_data["creator_funded_cluster_supply_pct"] = 24.0
+    token_data["genesis_cluster_suspected"] = True
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 57
+    assert any(
+        "same-source funding cluster" in factor.lower()
+        for factor in result["top_risk_factors"]
+    )
+
+
+def test_calculate_risk_score_applies_low_holder_concentration_reduction():
+    """Low top-10/top-20 concentration should add a small risk reduction."""
+    llm_payload = (
+        '{"risk_score":40,"risk_level":"MEDIUM","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["holders"] = {
+        "top_10_concentration_pct": 12.0,
+        "top_20_concentration_pct": 22.0,
+    }
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] <= 35
+    assert any(
+        "top-10 <15%" in signal.lower()
+        for signal in result["top_safe_signals"]
+    )
+
+
+def test_calculate_risk_score_applies_high_holder_concentration_weight():
+    """High concentration should add deterministic risk weight."""
+    llm_payload = (
+        '{"risk_score":30,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["holders"] = {
+        "top_10_concentration_pct": 34.0,
+        "top_20_concentration_pct": 50.0,
+    }
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 50
+    assert any(
+        "holder concentration is high" in factor.lower()
+        for factor in result["top_risk_factors"]
+    )

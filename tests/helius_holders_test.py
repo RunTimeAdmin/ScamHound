@@ -58,4 +58,39 @@ def test_get_token_holders_uses_top10_in_concentration_score(monkeypatch):
     assert result is not None
     assert result["top1_pct"] == 14.0
     assert result["top10_pct"] == 39.92
-    assert result["concentration_score"] == "moderate"
+    assert result["top20_pct"] == 39.92
+    assert result["concentration_score"] == "high"
+
+
+def test_check_wallet_clustering_flags_large_same_source_cluster(monkeypatch):
+    top_holders = [
+        {"address": "w1", "percentage": 9.0},
+        {"address": "w2", "percentage": 8.0},
+        {"address": "w3", "percentage": 7.0},
+        {"address": "w4", "percentage": 3.0},
+    ]
+    funding_map = {
+        "w1": "creator",
+        "w2": "creator",
+        "w3": "creator",
+        "w4": "other",
+    }
+
+    def fake_funding_source(wallet):
+        return funding_map.get(wallet)
+
+    monkeypatch.setattr(
+        helius_client,
+        "_find_wallet_funding_source",
+        fake_funding_source,
+    )
+
+    result = helius_client.check_wallet_clustering(
+        top_holders,
+        creator_wallet="creator",
+    )
+
+    assert result["largest_funding_cluster_wallets"] == 3
+    assert result["largest_funding_cluster_supply_pct"] == 24.0
+    assert result["creator_funded_cluster_supply_pct"] == 24.0
+    assert result["genesis_cluster_suspected"] is True

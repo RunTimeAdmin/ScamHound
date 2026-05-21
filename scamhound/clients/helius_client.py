@@ -76,18 +76,22 @@ _CREATOR_HISTORY_CACHE_TTL_SECONDS = int(
 )
 
 
-def _classify_holder_concentration(top1_pct: float, top10_pct: float) -> str:
+def _classify_holder_concentration(
+    top1_pct: float,
+    top10_pct: float,
+    top20_pct: float,
+) -> str:
     """
     Classify holder concentration using both top-1 and top-10 distribution.
 
     We keep top-1 as a strong signal for whale risk but also guard against
     misleadingly "low" labels when aggregate top-10 concentration is elevated.
     """
-    if top1_pct > 50 or top10_pct > 80:
+    if top1_pct > 50 or top10_pct > 80 or top20_pct > 90:
         return "critical"
-    if top1_pct > 30 or top10_pct > 60:
+    if top10_pct > 30 or top20_pct > 45:
         return "high"
-    if top1_pct > 15 or top10_pct >= 35:
+    if top10_pct >= 15 or top20_pct >= 25 or top1_pct >= 12:
         return "moderate"
     return "low"
 
@@ -723,7 +727,10 @@ def _find_wallet_funding_source(wallet: str) -> Optional[str]:
     return None
 
 
-def check_wallet_clustering(holder_wallets: List[str]) -> Dict[str, Any]:
+def check_wallet_clustering(
+    top_holders: List[Dict[str, Any]],
+    creator_wallet: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Check if multiple holder wallets are connected (funded from same source).
     
@@ -732,15 +739,25 @@ def check_wallet_clustering(holder_wallets: List[str]) -> Dict[str, Any]:
     - clustering_score: float 0.0-1.0 (1.0 = all top holders are connected)
     - HIGH RISK if: clustering_score > 0.4
     """
-    if not holder_wallets or len(holder_wallets) < 2:
+    holders = [h for h in (top_holders or []) if isinstance(h, dict)]
+    if not holders or len(holders) < 2:
         return {
             "clustered_wallets": 0,
-            "clustering_score": 0.0
+            "clustering_score": 0.0,
+            "largest_funding_cluster_wallets": 0,
+            "largest_funding_cluster_supply_pct": 0.0,
+            "creator_funded_cluster_supply_pct": 0.0,
+            "genesis_cluster_suspected": False,
         }
     
     # Track funding sources for each wallet
-    funding_sources: Dict[str, List[str]] = {}
-    analyzed_wallets = holder_wallets[:10]  # Limit to top 10
+    funding_sources: Dict[str, List[Dict[str, Any]]] = {}
+    analyzed_holders = holders[:10]  # Focus on highest-impact holders
+    analyzed_wallets = [
+        str(h.get("address") or "").strip()
+        for h in analyzed_holders
+        if str(h.get("address") or "").strip()
+    ]
 
     max_workers = min(8, len(analyzed_wallets))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -757,24 +774,49 @@ def check_wallet_clustering(holder_wallets: List[str]) -> Dict[str, Any]:
             if source:
                 if source not in funding_sources:
                     funding_sources[source] = []
-                funding_sources[source].append(wallet)
+                holder_info = next(
+                    (
+                        h for h in analyzed_holders
+                        if str(h.get("address") or "").strip() == wallet
+                    ),
+                    {},
+                )
+                funding_sources[source].append(holder_info)
     
     # Find clusters (multiple wallets funded from same source)
     max_cluster = 0
     total_clustered = 0
+    largest_cluster_supply_pct = 0.0
+    creator_cluster_supply_pct = 0.0
     
-    for source, wallets in funding_sources.items():
-        if len(wallets) > 1:
-            total_clustered += len(wallets)
-            max_cluster = max(max_cluster, len(wallets))
+    for source, funded_holders in funding_sources.items():
+        if len(funded_holders) <= 1:
+            continue
+        total_clustered += len(funded_holders)
+        max_cluster = max(max_cluster, len(funded_holders))
+        cluster_supply = sum(float(h.get("percentage") or 0.0) for h in funded_holders)
+        largest_cluster_supply_pct = max(largest_cluster_supply_pct, cluster_supply)
+        if creator_wallet and source == creator_wallet:
+            creator_cluster_supply_pct = max(creator_cluster_supply_pct, cluster_supply)
     
     # Calculate clustering score
     total_analyzed = len(analyzed_wallets)
     clustering_score = total_clustered / total_analyzed if total_analyzed > 0 else 0.0
+    genesis_cluster_suspected = (
+        largest_cluster_supply_pct >= 20.0 and max_cluster >= 3
+    )
     
     return {
         "clustered_wallets": total_clustered,
-        "clustering_score": round(clustering_score, 2)
+        "clustering_score": round(clustering_score, 2),
+        "largest_funding_cluster_wallets": max_cluster,
+        "largest_funding_cluster_supply_pct": round(
+            largest_cluster_supply_pct, 2
+        ),
+        "creator_funded_cluster_supply_pct": round(
+            creator_cluster_supply_pct, 2
+        ),
+        "genesis_cluster_suspected": genesis_cluster_suspected,
     }
 
 
@@ -902,12 +944,22 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
         # Calculate concentration metrics
         top1_pct = top_holders[0]["percentage"] if len(top_holders) >= 1 else 0
         top5_pct = sum(h["percentage"] for h in top_holders[:5]) if len(top_holders) >= 5 else sum(h["percentage"] for h in top_holders)
-        top10_pct = sum(h["percentage"] for h in top_holders[:10]) if len(top_holders) >= 10 else sum(h["percentage"] for h in top_holders)
+        top10_pct = (
+            sum(h["percentage"] for h in top_holders[:10])
+            if len(top_holders) >= 10
+            else sum(h["percentage"] for h in top_holders)
+        )
+        top20_pct = (
+            sum(h["percentage"] for h in top_holders[:20])
+            if len(top_holders) >= 20
+            else sum(h["percentage"] for h in top_holders)
+        )
         
         # Classify concentration from both whale and aggregate distribution.
         concentration_score = _classify_holder_concentration(
             top1_pct=top1_pct,
             top10_pct=top10_pct,
+            top20_pct=top20_pct,
         )
         
         # Only report total holders when we can infer it accurately.
@@ -916,6 +968,7 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
         
         logger.info(f"[HELIUS] Holder analysis for {token_mint[:8]}...: "
                    f"top1={top1_pct:.1f}%, top5={top5_pct:.1f}%, top10={top10_pct:.1f}%, "
+                   f"top20={top20_pct:.1f}%, "
                    f"concentration={concentration_score}"
                    f"{' (pump.fun, bonding curve excluded)' if bonding_curve_excluded else ''}")
         
@@ -927,6 +980,7 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
             "top1_pct": round(top1_pct, 2),
             "top5_pct": round(top5_pct, 2),
             "top10_pct": round(top10_pct, 2),
+            "top20_pct": round(top20_pct, 2),
             "is_pumpfun": is_pumpfun,
             "bonding_curve_excluded": bonding_curve_excluded
         }

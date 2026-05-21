@@ -273,6 +273,7 @@ async def _async_get_holder_data(token_mint: str) -> Optional[Dict[str, Any]]:
             return {
                 "top_holders": holder_data.get("top_holders", []),
                 "top_10_concentration_pct": holder_data.get("top10_pct", 0),
+                "top_20_concentration_pct": holder_data.get("top20_pct", 0),
                 "total_holder_count": holder_data.get("total_holders"),
                 "concentration_score": holder_data.get(
                     "concentration_score", "unknown"
@@ -480,15 +481,36 @@ async def _async_analyze_creator(creator_wallet: str) -> Optional[Dict[str, Any]
         return None
 
 
-async def _async_check_clustering(holder_wallets: list) -> Optional[Dict[str, Any]]:
+async def _async_check_clustering(
+    top_holders: list,
+    creator_wallet: Optional[str],
+) -> Optional[Dict[str, Any]]:
     """Async wrapper for checking wallet clustering via Helius."""
     try:
         clustering = await asyncio.to_thread(
-            helius_client.check_wallet_clustering, holder_wallets
+            helius_client.check_wallet_clustering,
+            top_holders,
+            creator_wallet,
         )
         return {
             "clustering_score": clustering.get("clustering_score", 0),
-            "clustered_wallets": clustering.get("clustered_wallets", 0)
+            "clustered_wallets": clustering.get("clustered_wallets", 0),
+            "largest_funding_cluster_wallets": clustering.get(
+                "largest_funding_cluster_wallets",
+                0,
+            ),
+            "largest_funding_cluster_supply_pct": clustering.get(
+                "largest_funding_cluster_supply_pct",
+                0.0,
+            ),
+            "creator_funded_cluster_supply_pct": clustering.get(
+                "creator_funded_cluster_supply_pct",
+                0.0,
+            ),
+            "genesis_cluster_suspected": clustering.get(
+                "genesis_cluster_suspected",
+                False,
+            ),
         }
     except Exception as e:
         logger.warning(f"[SCAMHOUND] Could not check clustering: {e}")
@@ -1014,7 +1036,13 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             ]
             
             if holder_wallets:
-                clustering_task = _async_check_clustering(holder_wallets)
+                clustering_task = _async_check_clustering(
+                    top_holders=token_data.get("holders", {}).get(
+                        "top_holders",
+                        [],
+                    ),
+                    creator_wallet=creator_wallet,
+                )
                 (
                     creator_result,
                     clustering_result,
@@ -1037,6 +1065,24 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
             if clustering_result and not isinstance(clustering_result, Exception):
                 token_data["clustering_score"] = clustering_result.get("clustering_score", 0)
                 token_data["clustered_wallets"] = clustering_result.get("clustered_wallets", 0)
+                token_data["largest_funding_cluster_wallets"] = (
+                    clustering_result.get("largest_funding_cluster_wallets", 0)
+                )
+                token_data["largest_funding_cluster_supply_pct"] = (
+                    clustering_result.get(
+                        "largest_funding_cluster_supply_pct",
+                        0.0,
+                    )
+                )
+                token_data["creator_funded_cluster_supply_pct"] = (
+                    clustering_result.get(
+                        "creator_funded_cluster_supply_pct",
+                        0.0,
+                    )
+                )
+                token_data["genesis_cluster_suspected"] = bool(
+                    clustering_result.get("genesis_cluster_suspected", False)
+                )
 
             if bundle_result and not isinstance(bundle_result, Exception):
                 token_data.update(bundle_result)

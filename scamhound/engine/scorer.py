@@ -533,6 +533,47 @@ def _apply_security_control_weights(
         enforced_factors.append(
             "New holder velocity spiked sharply versus the prior hour."
         )
+    largest_cluster_supply = token_data.get("largest_funding_cluster_supply_pct")
+    if isinstance(largest_cluster_supply, (int, float)):
+        if largest_cluster_supply >= 30:
+            additions += 30
+            enforced_factors.append(
+                "Top holders form a same-source funding cluster controlling >30%."
+            )
+        elif largest_cluster_supply >= 20:
+            additions += 20
+            enforced_factors.append(
+                "Top holders form a same-source funding cluster controlling >20%."
+            )
+    if bool(token_data.get("genesis_cluster_suspected")):
+        additions += 10
+    creator_cluster_supply = token_data.get("creator_funded_cluster_supply_pct")
+    if isinstance(creator_cluster_supply, (int, float)) and creator_cluster_supply >= 20:
+        additions += 15
+        enforced_factors.append(
+            "Creator-funded holder cluster controls a large share of supply."
+        )
+    holder_data = token_data.get("holders", {})
+    top10_concentration = holder_data.get("top_10_concentration_pct")
+    top20_concentration = holder_data.get("top_20_concentration_pct")
+    if isinstance(top10_concentration, (int, float)) and isinstance(
+        top20_concentration, (int, float)
+    ):
+        if top10_concentration > 30 or top20_concentration > 45:
+            additions += 20
+            enforced_factors.append(
+                "Holder concentration is high (top-10 >30% or top-20 >45%)."
+            )
+        elif top10_concentration >= 15 or top20_concentration >= 25:
+            additions += 8
+            enforced_factors.append(
+                "Holder concentration is moderate and needs ongoing monitoring."
+            )
+        else:
+            reductions += 5
+            enforced_safe_signals.append(
+                "Low holder concentration across top wallets (top-10 <15%, top-20 <25%)."
+            )
     holder_velocity_band = str(token_data.get("holder_velocity_band") or "")
     if holder_velocity_band == "explosive":
         additions += 15
@@ -701,6 +742,7 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     holders = token_data.get("holders", {})
     top_holders = holders.get("top_holders", [])
     top_10_concentration = holders.get("top_10_concentration_pct", 0)
+    top_20_concentration = holders.get("top_20_concentration_pct", 0)
     total_holders = holders.get("total_holder_count")
     top1_pct = holders.get("top1_pct", 0)
     top5_pct = holders.get("top5_pct", 0)
@@ -713,6 +755,16 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     prior_launches = token_data.get("prior_launch_count", 0)
     abandoned = token_data.get("abandoned_tokens", [])
     clustering_score = token_data.get("clustering_score", 0)
+    largest_funding_cluster_wallets = token_data.get(
+        "largest_funding_cluster_wallets"
+    )
+    largest_funding_cluster_supply_pct = token_data.get(
+        "largest_funding_cluster_supply_pct"
+    )
+    creator_funded_cluster_supply_pct = token_data.get(
+        "creator_funded_cluster_supply_pct"
+    )
+    genesis_cluster_suspected = token_data.get("genesis_cluster_suspected")
     
     # Market data
     liquidity_usd = token_data.get("liquidity_usd", 0)
@@ -881,6 +933,7 @@ BAGS.FM DATA:
 - Creator wallet: {creator_wallet}
 - Creator royalty: {royalty_pct}%
 - Top holder concentration: {top1_pct}% (top 1), {top5_pct}% (top 5), {top_10_concentration}% (top 10)
+- Top 20 holder concentration: {top_20_concentration}%
 - Concentration risk level: {concentration_score}
 - Total holders: {holder_count_text}
 - Lifetime trading fees collected: {lifetime_fees} SOL
@@ -893,6 +946,10 @@ ON-CHAIN CREATOR HISTORY (Helius):
 
 HOLDER CLUSTERING ANALYSIS:
 - Clustering score (0.0-1.0): {clustering_score} {clustering_warning}
+- Largest same-source holder cluster wallets: {largest_funding_cluster_wallets}
+- Largest same-source holder cluster supply %: {largest_funding_cluster_supply_pct}
+- Creator-funded holder cluster supply %: {creator_funded_cluster_supply_pct}
+- Genesis funding cluster suspected: {genesis_cluster_suspected}
 
 BUBBLEMAPS ANALYSIS (Token Holder Clustering):{bubblemaps_unavailable_note}
 - Decentralization Score (0-100, higher = better): {decentralization_score} {decentralization_warning}
@@ -1037,6 +1094,18 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
                 "prior_launches": token_data.get("prior_launch_count", 0),
                 "wallet_age_days": token_data.get("wallet_age_days", -1),
                 "clustering_score": token_data.get("clustering_score", 0),
+                "largest_funding_cluster_wallets": token_data.get(
+                    "largest_funding_cluster_wallets"
+                ),
+                "largest_funding_cluster_supply_pct": token_data.get(
+                    "largest_funding_cluster_supply_pct"
+                ),
+                "creator_funded_cluster_supply_pct": token_data.get(
+                    "creator_funded_cluster_supply_pct"
+                ),
+                "genesis_cluster_suspected": token_data.get(
+                    "genesis_cluster_suspected"
+                ),
                 "liquidity_usd": token_data.get("liquidity_usd", 0),
                 "lifetime_fees_sol": token_data.get("lifetime_fees_sol", 0),
                 "token_age_minutes": token_data.get("token_age_minutes"),
@@ -1245,6 +1314,18 @@ def _fallback_score(
         "prior_launches": token_data.get("prior_launch_count", 0),
         "wallet_age_days": token_data.get("wallet_age_days", -1),
         "clustering_score": token_data.get("clustering_score", 0),
+        "largest_funding_cluster_wallets": token_data.get(
+            "largest_funding_cluster_wallets"
+        ),
+        "largest_funding_cluster_supply_pct": token_data.get(
+            "largest_funding_cluster_supply_pct"
+        ),
+        "creator_funded_cluster_supply_pct": token_data.get(
+            "creator_funded_cluster_supply_pct"
+        ),
+        "genesis_cluster_suspected": token_data.get(
+            "genesis_cluster_suspected"
+        ),
         "liquidity_usd": token_data.get("liquidity_usd", 0),
         "lifetime_fees_sol": token_data.get("lifetime_fees_sol", 0),
         "token_age_minutes": token_data.get("token_age_minutes"),
