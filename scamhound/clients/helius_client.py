@@ -50,6 +50,22 @@ _CREATOR_HISTORY_CACHE_TTL_SECONDS = int(
 )
 
 
+def _classify_holder_concentration(top1_pct: float, top10_pct: float) -> str:
+    """
+    Classify holder concentration using both top-1 and top-10 distribution.
+
+    We keep top-1 as a strong signal for whale risk but also guard against
+    misleadingly "low" labels when aggregate top-10 concentration is elevated.
+    """
+    if top1_pct > 50 or top10_pct > 80:
+        return "critical"
+    if top1_pct > 30 or top10_pct > 60:
+        return "high"
+    if top1_pct > 15 or top10_pct >= 35:
+        return "moderate"
+    return "low"
+
+
 def _fetch_creator_transactions(
     wallet_address: str,
     max_pages: int,
@@ -504,15 +520,11 @@ def get_token_holders(token_mint: str, limit: int = 20) -> Optional[Dict[str, An
         top5_pct = sum(h["percentage"] for h in top_holders[:5]) if len(top_holders) >= 5 else sum(h["percentage"] for h in top_holders)
         top10_pct = sum(h["percentage"] for h in top_holders[:10]) if len(top_holders) >= 10 else sum(h["percentage"] for h in top_holders)
         
-        # Determine concentration score based on top holder
-        if top1_pct > 50:
-            concentration_score = "critical"
-        elif top1_pct > 30:
-            concentration_score = "high"
-        elif top1_pct > 15:
-            concentration_score = "moderate"
-        else:
-            concentration_score = "low"
+        # Classify concentration from both whale and aggregate distribution.
+        concentration_score = _classify_holder_concentration(
+            top1_pct=top1_pct,
+            top10_pct=top10_pct,
+        )
         
         # Only report total holders when we can infer it accurately.
         sampled_holder_count = len(accounts)

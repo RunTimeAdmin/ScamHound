@@ -64,6 +64,13 @@ while observing model quality. Monitor summary metrics with:
 
 - `GET /api/soak/audit`
 - `GET /api/_legacy/soak/audit`
+- `GET /api/soak/audit/samples` (manual spot-check sample set)
+
+Generate a local soak report from SQLite:
+
+```bash
+python scamhound/soak_report.py --summary-limit 200 --sample-limit 50
+```
 
 ## Architecture
 
