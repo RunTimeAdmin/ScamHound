@@ -7,6 +7,7 @@ Supports multiple providers: Anthropic Claude (default) and DeepSeek.
 import json
 import logging
 import os
+import time
 from typing import Dict, Any
 from datetime import datetime, timezone
 
@@ -107,6 +108,23 @@ def _call_anthropic(system_prompt: str, user_prompt: str) -> str:
     )
 
     return response.content[0].text
+
+
+def _get_retry_settings() -> tuple[int, float]:
+    """Return retry settings for transient LLM failures."""
+    try:
+        retries = int(os.environ.get("LLM_MAX_RETRIES", "2"))
+    except ValueError:
+        retries = 2
+    retries = max(0, retries)
+
+    try:
+        backoff_seconds = float(os.environ.get("LLM_RETRY_BACKOFF_SECONDS", "1.0"))
+    except ValueError:
+        backoff_seconds = 1.0
+    backoff_seconds = max(0.0, backoff_seconds)
+
+    return retries, backoff_seconds
 
 
 def _coerce_risk_score(value: Any, default: int = 50) -> int:
@@ -515,68 +533,93 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
             return _fallback_score(token_data, "API key not configured")
     
     user_prompt = build_user_prompt(token_data)
-    
-    try:
-        response_text = _call_llm(SYSTEM_PROMPT, user_prompt)
-        result = _parse_llm_json_response(response_text)
-        
-        normalized_score = _coerce_risk_score(result.get("risk_score", 50))
-        normalized_level = _normalize_risk_level(
-            result.get("risk_level"), normalized_score
-        )
-        verdict = _sanitize_verdict(
-            str(result.get("verdict", "Analysis complete.")).strip(),
-            token_data,
-        )
-        risk_factors = _normalize_string_list(
-            result.get("top_risk_factors", []), max_items=5, max_item_length=200
-        )
-        risk_factors = _sanitize_risk_factors(risk_factors, token_data)
-        safe_signals = _normalize_string_list(
-            result.get("top_safe_signals", []), max_items=5, max_item_length=200
-        )
+    max_retries, base_backoff = _get_retry_settings()
+    attempts = max_retries + 1
+    last_error = "Unknown error"
 
-        # Build the complete score dict
-        score_data = {
-            "token_mint": token_data.get("token_mint"),
-            "name": token_data.get("name"),
-            "symbol": token_data.get("symbol"),
-            "risk_score": normalized_score,
-            "risk_level": normalized_level,
-            "verdict": verdict,
-            "top_risk_factors": risk_factors,
-            "top_safe_signals": safe_signals,
-            "creator_wallet": token_data.get("creator", {}).get("wallet"),
-            "creator_username": token_data.get("creator", {}).get("username"),
-            "top_10_concentration": token_data.get("holders", {}).get("top_10_concentration_pct", 0),
-            "prior_launches": token_data.get("prior_launch_count", 0),
-            "wallet_age_days": token_data.get("wallet_age_days", -1),
-            "clustering_score": token_data.get("clustering_score", 0),
-            "liquidity_usd": token_data.get("liquidity_usd", 0),
-            "lifetime_fees_sol": token_data.get("lifetime_fees_sol", 0),
-            "token_age_minutes": token_data.get("token_age_minutes"),
-            "token_status": token_data.get("token_status", "unknown"),
-            "scored_at": datetime.now(timezone.utc).isoformat(),
-            "created_at": token_data.get("created_at"),
-            "score_source": f"ai_{provider}"
-        }
+    for attempt in range(attempts):
+        try:
+            response_text = _call_llm(SYSTEM_PROMPT, user_prompt)
+            result = _parse_llm_json_response(response_text)
         
-        logger.info(f"[SCAMHOUND] {score_data['symbol']} | Score: {score_data['risk_score']} | {score_data['risk_level']} | Provider: {provider}")
-        
-        return score_data
-        
-    except (anthropic.APIError, ValueError) as e:
-        logger.error(f"[SCAMHOUND] LLM API error ({provider}): {e}")
-        return _fallback_score(token_data, "API error")
-    except json.JSONDecodeError as e:
-        logger.error(f"[SCAMHOUND] JSON parse error: {e}")
-        return _fallback_score(token_data, "Parse error")
-    except Exception as e:
-        logger.error(f"[SCAMHOUND] Unexpected error ({provider}): {e}")
-        return _fallback_score(token_data, "Unknown error")
+            normalized_score = _coerce_risk_score(result.get("risk_score", 50))
+            normalized_level = _normalize_risk_level(
+                result.get("risk_level"), normalized_score
+            )
+            verdict = _sanitize_verdict(
+                str(result.get("verdict", "Analysis complete.")).strip(),
+                token_data,
+            )
+            risk_factors = _normalize_string_list(
+                result.get("top_risk_factors", []), max_items=5, max_item_length=200
+            )
+            risk_factors = _sanitize_risk_factors(risk_factors, token_data)
+            safe_signals = _normalize_string_list(
+                result.get("top_safe_signals", []), max_items=5, max_item_length=200
+            )
+
+            score_data = {
+                "token_mint": token_data.get("token_mint"),
+                "name": token_data.get("name"),
+                "symbol": token_data.get("symbol"),
+                "risk_score": normalized_score,
+                "risk_level": normalized_level,
+                "verdict": verdict,
+                "top_risk_factors": risk_factors,
+                "top_safe_signals": safe_signals,
+                "creator_wallet": token_data.get("creator", {}).get("wallet"),
+                "creator_username": token_data.get("creator", {}).get("username"),
+                "top_10_concentration": token_data.get("holders", {}).get(
+                    "top_10_concentration_pct", 0
+                ),
+                "prior_launches": token_data.get("prior_launch_count", 0),
+                "wallet_age_days": token_data.get("wallet_age_days", -1),
+                "clustering_score": token_data.get("clustering_score", 0),
+                "liquidity_usd": token_data.get("liquidity_usd", 0),
+                "lifetime_fees_sol": token_data.get("lifetime_fees_sol", 0),
+                "token_age_minutes": token_data.get("token_age_minutes"),
+                "token_status": token_data.get("token_status", "unknown"),
+                "scored_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": token_data.get("created_at"),
+                "score_source": f"ai_{provider}",
+                "llm_attempts": attempt + 1,
+            }
+
+            logger.info(
+                f"[SCAMHOUND] {score_data['symbol']} | Score: "
+                f"{score_data['risk_score']} | {score_data['risk_level']} | "
+                f"Provider: {provider} | Attempts: {attempt + 1}"
+            )
+            return score_data
+
+        except (anthropic.APIError, ValueError) as e:
+            last_error = "API error"
+            logger.error(
+                f"[SCAMHOUND] LLM API error ({provider}) "
+                f"attempt {attempt + 1}/{attempts}: {e}"
+            )
+        except json.JSONDecodeError as e:
+            last_error = "Parse error"
+            logger.error(
+                f"[SCAMHOUND] JSON parse error "
+                f"attempt {attempt + 1}/{attempts}: {e}"
+            )
+        except Exception as e:
+            last_error = "Unknown error"
+            logger.error(
+                f"[SCAMHOUND] Unexpected error ({provider}) "
+                f"attempt {attempt + 1}/{attempts}: {e}"
+            )
+
+        if attempt < attempts - 1 and base_backoff > 0:
+            time.sleep(base_backoff * (2 ** attempt))
+
+    return _fallback_score(token_data, last_error, attempts=attempts)
 
 
-def _fallback_score(token_data: Dict[str, Any], reason: str) -> Dict[str, Any]:
+def _fallback_score(
+    token_data: Dict[str, Any], reason: str, attempts: int = 1
+) -> Dict[str, Any]:
     """Generate a fallback score when Claude API fails."""
     return {
         "token_mint": token_data.get("token_mint"),
@@ -602,5 +645,6 @@ def _fallback_score(token_data: Dict[str, Any], reason: str) -> Dict[str, Any]:
         "token_status": token_data.get("token_status", "unknown"),
         "scored_at": datetime.now(timezone.utc).isoformat(),
         "created_at": token_data.get("created_at"),
-        "score_source": "fallback"
+        "score_source": "fallback",
+        "llm_attempts": attempts,
     }

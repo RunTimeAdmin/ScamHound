@@ -77,6 +77,7 @@ def test_calculate_risk_score_marks_fallback_as_unscored():
     assert result["risk_score"] == 0
     assert result["risk_level"] == "UNSCORED"
     assert result["score_source"] == "fallback"
+    assert result["llm_attempts"] == 3
 
 
 def test_calculate_risk_score_sanitizes_age_and_unknown_data_claims():
@@ -186,3 +187,31 @@ def test_call_anthropic_uses_model_from_config():
     fake_client.messages.create.assert_called_once()
     kwargs = fake_client.messages.create.call_args.kwargs
     assert kwargs["model"] == "claude-sonnet-configured"
+
+
+def test_calculate_risk_score_retries_after_transient_failure():
+    """A transient LLM failure should retry and then succeed."""
+    token_data = _sample_token_data()
+    llm_payload = (
+        '{"risk_score":61,"risk_level":"HIGH","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.dict(
+            "os.environ",
+            {"LLM_MAX_RETRIES": "2", "LLM_RETRY_BACKOFF_SECONDS": "0"},
+            clear=False,
+        ):
+            with patch.object(
+                scorer,
+                "_call_llm",
+                side_effect=[ValueError("temp"), llm_payload],
+            ) as llm_mock:
+                result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] == 61
+    assert result["risk_level"] == "HIGH"
+    assert result["score_source"].startswith("ai_")
+    assert result["llm_attempts"] == 2
+    assert llm_mock.call_count == 2
