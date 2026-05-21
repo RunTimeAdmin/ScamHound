@@ -174,3 +174,5 @@ def test_get_trade_history_flags_holder_velocity_spike():
     assert trades["unique_buyers_last_hour"] >= 20
     assert trades["unique_buyers_prev_hour"] <= 10
     assert trades["holder_velocity_spike"] is True
+    assert trades["holder_velocity_band"] in {"high", "explosive"}
+    assert trades["unique_buyers_last_15m"] >= 12

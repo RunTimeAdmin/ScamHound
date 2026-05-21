@@ -478,3 +478,22 @@ def test_calculate_risk_score_applies_supply_burn_reduction():
 
     assert result["risk_score"] <= 36
     assert result["supply_burn_meaningful"] is True
+
+
+def test_calculate_risk_score_weights_explosive_holder_velocity_band():
+    """Explosive velocity band should add additional deterministic risk."""
+    llm_payload = (
+        '{"risk_score":30,"risk_level":"LOW","verdict":"ok",'
+        '"top_risk_factors":[],"top_safe_signals":[]}'
+    )
+    token_data = _sample_token_data()
+    token_data["holder_velocity_band"] = "explosive"
+    token_data["unique_buyers_last_15m"] = 25
+    token_data["unique_buyers_prev_15m"] = 5
+
+    with patch.object(scorer, "_get_anthropic_client", return_value=object()):
+        with patch.object(scorer, "_call_llm", return_value=llm_payload):
+            result = scorer.calculate_risk_score(token_data)
+
+    assert result["risk_score"] >= 45
+    assert result["holder_velocity_band"] == "explosive"

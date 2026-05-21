@@ -513,6 +513,22 @@ def _apply_security_control_weights(
         enforced_factors.append(
             "New holder velocity spiked sharply versus the prior hour."
         )
+    holder_velocity_band = str(token_data.get("holder_velocity_band") or "")
+    if holder_velocity_band == "explosive":
+        additions += 15
+        enforced_factors.append(
+            "Buyer velocity is in explosive acceleration mode (15m window)."
+        )
+    elif holder_velocity_band == "high":
+        additions += 8
+        enforced_factors.append(
+            "Buyer velocity remains in a high acceleration band."
+        )
+    elif holder_velocity_band == "moderate":
+        additions += 4
+        enforced_factors.append(
+            "Buyer velocity shows moderate acceleration."
+        )
     if bool(token_data.get("dexscreener_has_warning_label")):
         additions += 20
         enforced_factors.append(
@@ -713,6 +729,11 @@ def build_user_prompt(token_data: Dict[str, Any]) -> str:
     unique_buyers_last_hour = token_data.get("unique_buyers_last_hour")
     unique_buyers_prev_hour = token_data.get("unique_buyers_prev_hour")
     holder_velocity_spike = token_data.get("holder_velocity_spike")
+    unique_buyers_last_15m = token_data.get("unique_buyers_last_15m")
+    unique_buyers_prev_15m = token_data.get("unique_buyers_prev_15m")
+    unique_buyers_last_6h = token_data.get("unique_buyers_last_6h")
+    unique_buyers_prev_6h = token_data.get("unique_buyers_prev_6h")
+    holder_velocity_band = token_data.get("holder_velocity_band")
     dexscreener_checked = token_data.get("dexscreener_checked")
     dexscreener_has_pair = token_data.get("dexscreener_has_pair")
     dexscreener_pair_count = token_data.get("dexscreener_pair_count")
@@ -877,6 +898,11 @@ MARKET DATA (Birdeye):
 - Unique buyers (last hour): {unique_buyers_last_hour}
 - Unique buyers (previous hour): {unique_buyers_prev_hour}
 - Holder velocity spike: {holder_velocity_spike}
+- Unique buyers (last 15m): {unique_buyers_last_15m}
+- Unique buyers (previous 15m): {unique_buyers_prev_15m}
+- Unique buyers (last 6h): {unique_buyers_last_6h}
+- Unique buyers (previous 6h): {unique_buyers_prev_6h}
+- Holder velocity band: {holder_velocity_band}
 - DexScreener checked: {dexscreener_checked}
 - DexScreener has pair: {dexscreener_has_pair}
 - DexScreener pair count: {dexscreener_pair_count}
@@ -1050,6 +1076,19 @@ def calculate_risk_score(token_data: Dict[str, Any]) -> Dict[str, Any]:
                 "holder_velocity_spike": token_data.get(
                     "holder_velocity_spike"
                 ),
+                "unique_buyers_last_15m": token_data.get(
+                    "unique_buyers_last_15m"
+                ),
+                "unique_buyers_prev_15m": token_data.get(
+                    "unique_buyers_prev_15m"
+                ),
+                "unique_buyers_last_6h": token_data.get(
+                    "unique_buyers_last_6h"
+                ),
+                "unique_buyers_prev_6h": token_data.get(
+                    "unique_buyers_prev_6h"
+                ),
+                "holder_velocity_band": token_data.get("holder_velocity_band"),
                 "dexscreener_checked": token_data.get(
                     "dexscreener_checked"
                 ),
@@ -1225,6 +1264,11 @@ def _fallback_score(
         "holder_velocity_spike": token_data.get(
             "holder_velocity_spike"
         ),
+        "unique_buyers_last_15m": token_data.get("unique_buyers_last_15m"),
+        "unique_buyers_prev_15m": token_data.get("unique_buyers_prev_15m"),
+        "unique_buyers_last_6h": token_data.get("unique_buyers_last_6h"),
+        "unique_buyers_prev_6h": token_data.get("unique_buyers_prev_6h"),
+        "holder_velocity_band": token_data.get("holder_velocity_band"),
         "dexscreener_checked": token_data.get("dexscreener_checked"),
         "dexscreener_has_pair": token_data.get("dexscreener_has_pair"),
         "dexscreener_pair_count": token_data.get("dexscreener_pair_count"),

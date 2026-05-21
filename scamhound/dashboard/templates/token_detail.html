@@ -416,6 +416,22 @@
                         {% endif %}
                     </td>
                 </tr>
+                <tr>
+                    <td>Holder Velocity Momentum</td>
+                    <td>
+                        {% if token.holder_velocity_band %}
+                        {{ token.holder_velocity_band }}
+                        {% if token.unique_buyers_last_15m is not none and token.unique_buyers_prev_15m is not none %}
+                        (15m={{ token.unique_buyers_last_15m }}/{{ token.unique_buyers_prev_15m }})
+                        {% endif %}
+                        {% if token.holder_velocity_band in ['explosive', 'high'] %}
+                        <span class="warning-text">⚠️ Rapid Buyer Acceleration</span>
+                        {% endif %}
+                        {% else %}
+                        Not available
+                        {% endif %}
+                    </td>
+                </tr>
             </table>
         </div>
 

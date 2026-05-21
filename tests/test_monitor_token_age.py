@@ -467,6 +467,115 @@ def test_scan_single_token_enriches_supply_burn_ratio_from_holders():
     assert result["supply_burn_share_pct"] == 25.0
 
 
+def test_scan_single_token_propagates_holder_velocity_band():
+    """Velocity band from trade history should flow to score payload."""
+    token_mint = "11111111111111111111111111111116"
+    fake_score = {
+        "token_mint": token_mint,
+        "name": "Token",
+        "symbol": "TKN",
+        "risk_score": 55,
+        "risk_level": "HIGH",
+        "verdict": "ok",
+        "top_risk_factors": [],
+        "top_safe_signals": [],
+    }
+    trades = {
+        "unique_buyers_last_hour": 30,
+        "unique_buyers_prev_hour": 6,
+        "holder_velocity_spike": True,
+        "unique_buyers_last_15m": 14,
+        "unique_buyers_prev_15m": 3,
+        "unique_buyers_last_6h": 80,
+        "unique_buyers_prev_6h": 30,
+        "holder_velocity_band": "explosive",
+    }
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("engine.monitor.database.token_already_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.was_recently_scored", return_value=False)
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bags_profile",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_market_data",
+                new=AsyncMock(
+                    return_value={
+                        "overview": {},
+                        "liquidity": {},
+                        "trades": trades,
+                    }
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_holder_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_token_security_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_bubblemaps_data",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_simulate_honeypot",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_get_dexscreener_signals",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor._async_analyze_creator",
+                new=AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "engine.monitor.scorer.calculate_risk_score",
+                side_effect=lambda token_data: {
+                    **fake_score,
+                    "holder_velocity_band": token_data.get(
+                        "holder_velocity_band"
+                    ),
+                },
+            )
+        )
+        stack.enter_context(
+            patch("engine.monitor.database.is_watched_wallet", return_value=False)
+        )
+        stack.enter_context(patch("engine.monitor.database.save_score"))
+        stack.enter_context(patch("engine.monitor._mark_processed"))
+        stack.enter_context(patch("engine.monitor._notify_new_score"))
+
+        result = monitor.scan_single_token(token_mint, skip_if_scored=False)
+
+    assert result is not None
+    assert result["holder_velocity_band"] == "explosive"
+
+
 def test_detect_top_holder_dumping_flags_heavy_top_holder_sells():
     """Top-holder sell flow should trigger dumping signal."""
     top_holders = [

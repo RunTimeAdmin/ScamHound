@@ -133,6 +133,11 @@ def test_save_score_persists_security_check_fields(temp_database):
     score["supply_burn_checked"] = True
     score["supply_burn_share_pct"] = 31.5
     score["supply_burn_meaningful"] = True
+    score["unique_buyers_last_15m"] = 20
+    score["unique_buyers_prev_15m"] = 4
+    score["unique_buyers_last_6h"] = 60
+    score["unique_buyers_prev_6h"] = 22
+    score["holder_velocity_band"] = "explosive"
 
     database.save_score(score)
     row = database.get_token_score(mint)
@@ -177,6 +182,11 @@ def test_save_score_persists_security_check_fields(temp_database):
     assert row["supply_burn_checked"] == 1
     assert row["supply_burn_share_pct"] == 31.5
     assert row["supply_burn_meaningful"] == 1
+    assert row["unique_buyers_last_15m"] == 20
+    assert row["unique_buyers_prev_15m"] == 4
+    assert row["unique_buyers_last_6h"] == 60
+    assert row["unique_buyers_prev_6h"] == 22
+    assert row["holder_velocity_band"] == "explosive"
 
 
 def test_soak_audit_summary_reports_retry_and_unknown_signals(

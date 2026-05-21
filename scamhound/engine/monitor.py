@@ -658,6 +658,26 @@ async def scan_single_token_async(token_mint: str, skip_if_scored: bool = True) 
                 "holder_velocity_spike",
                 False,
             )
+            token_data["unique_buyers_last_15m"] = trades.get(
+                "unique_buyers_last_15m",
+                0,
+            )
+            token_data["unique_buyers_prev_15m"] = trades.get(
+                "unique_buyers_prev_15m",
+                0,
+            )
+            token_data["unique_buyers_last_6h"] = trades.get(
+                "unique_buyers_last_6h",
+                0,
+            )
+            token_data["unique_buyers_prev_6h"] = trades.get(
+                "unique_buyers_prev_6h",
+                0,
+            )
+            token_data["holder_velocity_band"] = trades.get(
+                "holder_velocity_band",
+                "stable",
+            )
             if token_data.get("holders", {}).get("top_holders"):
                 dumping = _detect_top_holder_dumping(
                     top_holders=token_data.get("holders", {}).get(

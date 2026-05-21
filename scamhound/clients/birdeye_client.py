@@ -293,6 +293,11 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
     - unique_buyers_last_hour: int
     - unique_buyers_prev_hour: int
     - holder_velocity_spike: bool
+    - unique_buyers_last_15m: int
+    - unique_buyers_prev_15m: int
+    - unique_buyers_last_6h: int
+    - unique_buyers_prev_6h: int
+    - holder_velocity_band: str
     """
     # Birdeye API requires limit to be 1-50
     limit = min(max(limit, 1), 50)
@@ -490,6 +495,46 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
             holder_velocity_spike = (
                 unique_buyers_last_hour / max(1, unique_buyers_prev_hour)
             ) >= 3.0
+
+    buyers_last_15m = set()
+    buyers_prev_15m = set()
+    buyers_last_6h = set()
+    buyers_prev_6h = set()
+    last_15m_start = reference_ts - 900
+    prev_15m_start = reference_ts - 1800
+    last_6h_start = reference_ts - 21600
+    prev_6h_start = reference_ts - 43200
+
+    for trade in recent_trades:
+        if str(trade.get("side") or "").lower() != "buy":
+            continue
+        wallet = str(trade.get("wallet") or "").strip()
+        ts = trade.get("timestamp")
+        if not wallet or not isinstance(ts, int):
+            continue
+        if last_15m_start <= ts <= reference_ts:
+            buyers_last_15m.add(wallet)
+        elif prev_15m_start <= ts < last_15m_start:
+            buyers_prev_15m.add(wallet)
+        if last_6h_start <= ts <= reference_ts:
+            buyers_last_6h.add(wallet)
+        elif prev_6h_start <= ts < last_6h_start:
+            buyers_prev_6h.add(wallet)
+
+    unique_buyers_last_15m = len(buyers_last_15m)
+    unique_buyers_prev_15m = len(buyers_prev_15m)
+    unique_buyers_last_6h = len(buyers_last_6h)
+    unique_buyers_prev_6h = len(buyers_prev_6h)
+
+    holder_velocity_band = "stable"
+    short_ratio = unique_buyers_last_15m / max(1, unique_buyers_prev_15m)
+    hour_ratio = unique_buyers_last_hour / max(1, unique_buyers_prev_hour)
+    if unique_buyers_last_15m >= 12 and short_ratio >= 3.0:
+        holder_velocity_band = "explosive"
+    elif unique_buyers_last_hour >= 20 and hour_ratio >= 2.5:
+        holder_velocity_band = "high"
+    elif unique_buyers_last_hour >= 10 and hour_ratio >= 1.8:
+        holder_velocity_band = "moderate"
     
     return {
         "two_sided_trader_activity_ratio": round(two_sided_ratio, 2),
@@ -509,6 +554,11 @@ def get_trade_history(token_mint: str, limit: int = 50) -> Optional[Dict[str, An
         "unique_buyers_last_hour": unique_buyers_last_hour,
         "unique_buyers_prev_hour": unique_buyers_prev_hour,
         "holder_velocity_spike": holder_velocity_spike,
+        "unique_buyers_last_15m": unique_buyers_last_15m,
+        "unique_buyers_prev_15m": unique_buyers_prev_15m,
+        "unique_buyers_last_6h": unique_buyers_last_6h,
+        "unique_buyers_prev_6h": unique_buyers_prev_6h,
+        "holder_velocity_band": holder_velocity_band,
     }
 
 

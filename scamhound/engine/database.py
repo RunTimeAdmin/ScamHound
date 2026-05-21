@@ -129,6 +129,11 @@ def init_db() -> None:
             supply_burn_checked INTEGER,
             supply_burn_share_pct REAL,
             supply_burn_meaningful INTEGER,
+            unique_buyers_last_15m INTEGER,
+            unique_buyers_prev_15m INTEGER,
+            unique_buyers_last_6h INTEGER,
+            unique_buyers_prev_6h INTEGER,
+            holder_velocity_band TEXT,
             tweet_sent BOOLEAN DEFAULT FALSE,
             scored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TEXT
@@ -371,6 +376,11 @@ def init_db() -> None:
         ("supply_burn_checked", "INTEGER"),
         ("supply_burn_share_pct", "REAL"),
         ("supply_burn_meaningful", "INTEGER"),
+        ("unique_buyers_last_15m", "INTEGER"),
+        ("unique_buyers_prev_15m", "INTEGER"),
+        ("unique_buyers_last_6h", "INTEGER"),
+        ("unique_buyers_prev_6h", "INTEGER"),
+        ("holder_velocity_band", "TEXT"),
     ]
     for col_name, col_type in new_columns:
         try:
@@ -554,14 +564,17 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
             dexscreener_has_trust_badge, dexscreener_has_warning_label,
             dexscreener_warning_labels, domain_name, domain_age_checked,
             domain_age_days, domain_recently_registered,
-            supply_burn_checked, supply_burn_share_pct, supply_burn_meaningful
+            supply_burn_checked, supply_burn_share_pct, supply_burn_meaningful,
+            unique_buyers_last_15m, unique_buyers_prev_15m,
+            unique_buyers_last_6h, unique_buyers_prev_6h, holder_velocity_band
         ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?
         )
         ON CONFLICT(token_mint) DO UPDATE SET
             name = excluded.name,
@@ -623,6 +636,11 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
             supply_burn_checked = excluded.supply_burn_checked,
             supply_burn_share_pct = excluded.supply_burn_share_pct,
             supply_burn_meaningful = excluded.supply_burn_meaningful,
+            unique_buyers_last_15m = excluded.unique_buyers_last_15m,
+            unique_buyers_prev_15m = excluded.unique_buyers_prev_15m,
+            unique_buyers_last_6h = excluded.unique_buyers_last_6h,
+            unique_buyers_prev_6h = excluded.unique_buyers_prev_6h,
+            holder_velocity_band = excluded.holder_velocity_band,
             scored_at = CURRENT_TIMESTAMP
     """, (
         score_data.get("token_mint"),
@@ -685,6 +703,11 @@ def save_score(score_data: Dict[str, Any], score_source: str = 'ai') -> None:
         score_data.get("supply_burn_checked"),
         score_data.get("supply_burn_share_pct"),
         score_data.get("supply_burn_meaningful"),
+        score_data.get("unique_buyers_last_15m"),
+        score_data.get("unique_buyers_prev_15m"),
+        score_data.get("unique_buyers_last_6h"),
+        score_data.get("unique_buyers_prev_6h"),
+        score_data.get("holder_velocity_band"),
     ))
     
     # Append to score history
