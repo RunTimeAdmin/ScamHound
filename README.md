@@ -39,13 +39,15 @@ Dashboard available at http://localhost:8000
 
 ## Configuration
 
-All configuration is via environment variables (`.env` file). See `.env.example` for the complete reference.
+Configuration is read from `.env` and optionally overridden by `scamhound/config.json` (written from the settings page). See `.env.example` for the complete reference.
 
 ### Key Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LLM_PROVIDER` | `anthropic` | AI provider: "anthropic" or "deepseek" |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic model name override |
+| `DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek model name override |
 | `AUTO_SCAN_ENABLED` | `false` | Enable background auto-polling for new tokens |
 | `POLL_INTERVAL_SECONDS` | `60` | Seconds between auto-scan cycles |
 | `PUMPFUN_ENABLED` | `false` | Enable pump.fun token feed (`ENABLE_PUMPFUN` also accepted) |

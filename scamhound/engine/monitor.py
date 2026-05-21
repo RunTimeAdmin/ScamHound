@@ -579,11 +579,7 @@ def scan_single_token(token_mint: str, skip_if_scored: bool = True) -> Optional[
         asyncio.get_running_loop()
     except RuntimeError:
         # No running loop (APScheduler thread context) — run locally
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(scan_single_token_async(token_mint, skip_if_scored))
-        finally:
-            loop.close()
+        return asyncio.run(scan_single_token_async(token_mint, skip_if_scored))
     raise RuntimeError(
         "scan_single_token() cannot be called from an active event loop; "
         "use scan_single_token_async() instead."
@@ -672,14 +668,9 @@ def run_cycle() -> None:
         
         logger.info(f"[SCAMHOUND] Got {len(recent_tokens)} tokens from platform router")
         
-        # Run the async scan loop in a new event loop
-        # (APScheduler calls run_cycle from a thread)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_run_cycle_async(recent_tokens))
-        finally:
-            loop.close()
+        # APScheduler executes this in a worker thread; use asyncio.run
+        # so each cycle has an isolated lifecycle-managed event loop.
+        asyncio.run(_run_cycle_async(recent_tokens))
         
         # Trigger Twitter alerts for high-risk tokens
         try:

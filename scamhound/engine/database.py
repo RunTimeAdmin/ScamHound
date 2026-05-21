@@ -75,6 +75,24 @@ def init_db() -> None:
             alert_count INTEGER DEFAULT 0
         )
     """)
+
+    # Unified watchlist storage (global + per-key watchlists).
+    # key_id NULL => global/admin watchlist entry
+    # key_id set  => personal watchlist entry for that API key
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS watchlist_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_id INTEGER DEFAULT NULL,
+            wallet_address TEXT NOT NULL,
+            label TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            added_at TEXT NOT NULL,
+            last_seen_at TEXT DEFAULT NULL,
+            alert_count INTEGER DEFAULT 0,
+            FOREIGN KEY (key_id) REFERENCES api_keys(id),
+            UNIQUE(key_id, wallet_address)
+        )
+    """)
     
     conn.commit()
     
@@ -138,6 +156,28 @@ def init_db() -> None:
         )
     """)
 
+    # Migrate legacy watchlist tables into unified watchlist_entries table.
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO watchlist_entries (
+            key_id, wallet_address, label, notes, added_at, last_seen_at, alert_count
+        )
+        SELECT
+            NULL, wallet_address, label, notes, added_at, last_seen_at, alert_count
+        FROM watchlist
+        """
+    )
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO watchlist_entries (
+            key_id, wallet_address, label, notes, added_at, last_seen_at, alert_count
+        )
+        SELECT
+            key_id, wallet_address, label, notes, added_at, last_seen_at, alert_count
+        FROM user_watchlist
+        """
+    )
+
     conn.commit()
 
     # Create indexes for common queries
@@ -150,6 +190,7 @@ def init_db() -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_risk_level_scored ON scored_tokens(risk_level, scored_at DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_symbol ON scored_tokens(symbol)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_watchlist_key ON user_watchlist(key_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_entries_key ON watchlist_entries(key_id)")
 
     # Score history table for tracking score changes over time
     cursor.execute("""
@@ -608,8 +649,10 @@ def add_to_watchlist(wallet_address: str, label: str = "", notes: str = "") -> b
     
     try:
         cursor.execute("""
-            INSERT INTO watchlist (wallet_address, label, notes, added_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO watchlist_entries (
+                key_id, wallet_address, label, notes, added_at
+            )
+            VALUES (NULL, ?, ?, ?, ?)
         """, (
             wallet_address,
             label,
@@ -630,7 +673,13 @@ def remove_from_watchlist(wallet_address: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("DELETE FROM watchlist WHERE wallet_address = ?", (wallet_address,))
+    cursor.execute(
+        """
+        DELETE FROM watchlist_entries
+        WHERE key_id IS NULL AND wallet_address = ?
+        """,
+        (wallet_address,),
+    )
     deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
@@ -644,7 +693,9 @@ def get_watchlist() -> List[Dict[str, Any]]:
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT * FROM watchlist
+        SELECT id, wallet_address, label, notes, added_at, last_seen_at, alert_count
+        FROM watchlist_entries
+        WHERE key_id IS NULL
         ORDER BY added_at DESC
     """)
     
@@ -659,7 +710,13 @@ def is_watched_wallet(wallet_address: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT 1 FROM watchlist WHERE wallet_address = ?", (wallet_address,))
+    cursor.execute(
+        """
+        SELECT 1 FROM watchlist_entries
+        WHERE key_id IS NULL AND wallet_address = ?
+        """,
+        (wallet_address,),
+    )
     result = cursor.fetchone()
     conn.close()
     
@@ -672,9 +729,9 @@ def update_watchlist_seen(wallet_address: str) -> bool:
     cursor = conn.cursor()
     
     cursor.execute("""
-        UPDATE watchlist
+        UPDATE watchlist_entries
         SET last_seen_at = ?, alert_count = alert_count + 1
-        WHERE wallet_address = ?
+        WHERE key_id IS NULL AND wallet_address = ?
     """, (datetime.now(timezone.utc).isoformat(), wallet_address))
     
     updated = cursor.rowcount > 0
@@ -695,7 +752,9 @@ def add_to_user_watchlist(key_id: int, wallet_address: str, label: str = "", not
     
     try:
         cursor.execute("""
-            INSERT INTO user_watchlist (key_id, wallet_address, label, notes, added_at)
+            INSERT INTO watchlist_entries (
+                key_id, wallet_address, label, notes, added_at
+            )
             VALUES (?, ?, ?, ?, ?)
         """, (
             key_id,
@@ -717,7 +776,13 @@ def remove_from_user_watchlist(key_id: int, wallet_address: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("DELETE FROM user_watchlist WHERE key_id = ? AND wallet_address = ?", (key_id, wallet_address))
+    cursor.execute(
+        """
+        DELETE FROM watchlist_entries
+        WHERE key_id = ? AND wallet_address = ?
+        """,
+        (key_id, wallet_address),
+    )
     deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
@@ -731,7 +796,8 @@ def get_user_watchlist(key_id: int) -> List[Dict[str, Any]]:
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT * FROM user_watchlist
+        SELECT id, key_id, wallet_address, label, notes, added_at, last_seen_at, alert_count
+        FROM watchlist_entries
         WHERE key_id = ?
         ORDER BY added_at DESC
     """, (key_id,))
@@ -747,7 +813,13 @@ def is_user_watched_wallet(key_id: int, wallet_address: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT 1 FROM user_watchlist WHERE key_id = ? AND wallet_address = ?", (key_id, wallet_address))
+    cursor.execute(
+        """
+        SELECT 1 FROM watchlist_entries
+        WHERE key_id = ? AND wallet_address = ?
+        """,
+        (key_id, wallet_address),
+    )
     result = cursor.fetchone()
     conn.close()
     
@@ -760,7 +832,7 @@ def update_user_watchlist_seen(key_id: int, wallet_address: str):
     cursor = conn.cursor()
     
     cursor.execute("""
-        UPDATE user_watchlist
+        UPDATE watchlist_entries
         SET last_seen_at = ?, alert_count = alert_count + 1
         WHERE key_id = ? AND wallet_address = ?
     """, (datetime.now(timezone.utc).isoformat(), key_id, wallet_address))

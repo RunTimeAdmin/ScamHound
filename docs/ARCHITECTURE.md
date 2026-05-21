@@ -6,7 +6,7 @@ This document provides a detailed technical overview of the ScamHound system arc
 
 ## System Overview
 
-ScamHound is a Python-based application built on FastAPI that monitors Solana token launches on Bags.fm for potential rug pull risks. The system combines data from multiple APIs with Claude AI analysis to generate risk scores.
+ScamHound is a Python-based application built on FastAPI that monitors Solana token launches across Bags.fm, pump.fun, LetsBonk, and Moonshot for potential rug pull risks. The system combines data from multiple APIs with configurable LLM analysis (Anthropic or DeepSeek) to generate risk scores.
 
 ```mermaid
 flowchart TB
@@ -49,17 +49,17 @@ flowchart TB
 
 ## Component Descriptions
 
-### 1. Main Entry Point (`main.py`)
+### 1. Runtime Bootstrap (`main.py`, `dashboard/app.py`)
 
-The application bootstrap that coordinates all components:
+The runtime bootstrap coordinates all components:
 
 - Loads environment variables from `.env`
-- Loads configuration from `config.json`
-- Initializes SQLite database
-- Starts APScheduler for background monitoring
-- Runs initial scan cycle in a background thread
-- Starts Uvicorn server for FastAPI
-- Handles graceful shutdown on SIGINT/SIGTERM
+- Loads configuration overlays from `config.json`
+- Initializes SQLite database and daily counters
+- Starts FastAPI with lifespan startup/shutdown hooks
+- Starts APScheduler jobs for daily resets and re-score cycles
+- Registers WebSocket score broadcast callback
+- Handles graceful shutdown of background schedulers
 
 **Key Functions:**
 - `main()` — Application entry point
@@ -86,6 +86,8 @@ Manages API keys and settings with secure masking:
 CONFIG_KEYS = [
     "BAGS_API_KEY", "HELIUS_API_KEY", "BIRDEYE_API_KEY",
     "BUBBLEMAPS_API_KEY", "ANTHROPIC_API_KEY",
+    "DEEPSEEK_API_KEY", "LLM_PROVIDER",
+    "ANTHROPIC_MODEL", "DEEPSEEK_MODEL",
     "TWITTER_API_KEY", "TWITTER_API_SECRET",
     "TWITTER_ACCESS_TOKEN", "TWITTER_ACCESS_SECRET",
     "TWITTER_BEARER_TOKEN",
@@ -104,7 +106,7 @@ The core polling and analysis orchestrator:
 - `_get_token_status()` — Determines token status (bonding/graduated/active)
 
 **Monitoring Cycle Flow:**
-1. Fetch recent launches from Bags.fm (`bags_client.get_recent_launches`)
+1. Fetch recent launches from the platform router (`platform_router.get_recent_launches`)
 2. For each new token:
    - Get full Bags profile
    - Calculate token age and status
@@ -123,14 +125,14 @@ The core polling and analysis orchestrator:
 
 ### 4. Scorer Module (`engine/scorer.py`)
 
-Claude AI integration for risk analysis:
+Configurable LLM integration for risk analysis:
 
 **Key Functions:**
 - `calculate_risk_score()` — Main scoring function
 - `build_user_prompt()` — Constructs the AI prompt with token data
 - `_fallback_score()` — Returns default score on API failure
 
-**AI Model:** `claude-sonnet-4-20250514`
+**Model Selection:** `LLM_PROVIDER` selects Anthropic or DeepSeek, and model names are configurable via `ANTHROPIC_MODEL` and `DEEPSEEK_MODEL`.
 
 **System Prompt Features:**
 - Token maturity guidelines (age-aware scoring)
@@ -259,7 +261,7 @@ sequenceDiagram
     participant Helius as Helius API
     participant Birdeye as Birdeye API
     participant BubbleMaps as BubbleMaps API
-    participant Scorer as Claude Scorer
+    participant Scorer as LLM Scorer
     participant DB as SQLite DB
 
     Scheduler->>Monitor: run_cycle() every 60s
@@ -289,11 +291,11 @@ sequenceDiagram
     participant Dashboard as Dashboard API
     participant Monitor as Monitor
     participant APIs as External APIs
-    participant Scorer as Claude Scorer
+    participant Scorer as LLM Scorer
     participant DB as SQLite DB
 
     User->>Dashboard: POST /api/scan {mint}
-    Dashboard->>Monitor: scan_single_token(mint)
+    Dashboard->>Monitor: scan_single_token_async(mint)
     
     Monitor->>APIs: Fetch all data sources
     APIs-->>Monitor: Aggregated token data
@@ -358,7 +360,7 @@ Configuration values are resolved in the following priority order:
 **Loading Process:**
 1. `load_dotenv()` loads `.env` file into environment
 2. `load_config()` applies defaults, then overlays `config.json` values
-3. All code reads from `os.environ.get()` at request time (not import time)
+3. Runtime components resolve config via `config.get_config()` / `os.environ` at request time (not import time)
 
 ---
 
@@ -413,7 +415,7 @@ except Exception as e:
 | Birdeye | 429 Rate Limit | Exponential backoff retry |
 | Birdeye | Timeout | Log error, return None |
 | BubbleMaps | 401 Unauthorized | Log error, return None |
-| Claude | API Error | Return fallback score (50/MEDIUM) |
+| LLM Providers | API Error | Return fallback score (0/UNSCORED) |
 
 ---
 

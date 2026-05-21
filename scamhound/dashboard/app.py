@@ -14,7 +14,7 @@ import uuid
 import json
 from contextlib import asynccontextmanager
 from xml.sax.saxutils import escape
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 # Type imports removed - not needed
 
@@ -1345,22 +1345,16 @@ async def autoscan_toggle(request: Request):
                     trigger=IntervalTrigger(seconds=_autoscan_interval),
                     id="scamhound_autoscan",
                     name="ScamHound Auto-Scan",
-                    replace_existing=True
+                    replace_existing=True,
+                    max_instances=1,
+                    coalesce=True,
+                    next_run_time=datetime.now(timezone.utc),
                 )
                 _autoscan_scheduler.start()
                 _autoscan_enabled = True
                 logger.info(
                     f"[AUTOSCAN] Scheduler started "
                     f"(interval: {_autoscan_interval}s)"
-                )
-
-                # Run initial cycle immediately in background thread
-                initial_thread = threading.Thread(
-                    target=_run_autoscan_cycle, daemon=True
-                )
-                initial_thread.start()
-                logger.info(
-                    "[AUTOSCAN] Initial scan cycle started in background"
                 )
             else:
                 logger.warning(
