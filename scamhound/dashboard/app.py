@@ -65,7 +65,7 @@ _RATE_LIMIT_CLEANUP_INTERVAL = 300  # 5 minutes in seconds
 
 # API Key tier rate limits (calls per day)
 TIER_LIMITS = {
-    "free": 100,
+    "free": 10,
     "pro": 10000,
     "builder": 100000,
     "enterprise": -1,  # unlimited
@@ -1121,7 +1121,7 @@ async def api_scan_batch(request: Request):
     Returns cached scores immediately for already-scored tokens.
     Triggers fresh scans for unknown tokens (async, non-blocking).
     
-    Rate cost: 1 batch request = 10 regular API call units.
+    Rate cost scales with queued work (minimum 1 unit).
     """
     # 1. Check API key — require Builder tier or higher
     key_row, key_error = _check_api_key(request)
@@ -1157,10 +1157,7 @@ async def api_scan_batch(request: Request):
     if not mints:
         return JSONResponse(status_code=400, content={"error": "No valid mint addresses provided"})
     
-    # 3. Charge 10 API call units for the batch
-    database.increment_api_key_usage(key_row["id"], "/api/scan/batch", count=10)
-    
-    # 4. Process: return cached scores, queue fresh scans for unknowns
+    # 3. Process: return cached scores, queue fresh scans for unknowns
     results = []
     to_scan = []
     
@@ -1181,6 +1178,12 @@ async def api_scan_batch(request: Request):
                 "data": None
             })
     
+    # 4. Charge usage units based on actual queued scans.
+    usage_units = max(1, len(to_scan))
+    database.increment_api_key_usage(
+        key_row["id"], "/api/scan/batch", count=usage_units
+    )
+
     # 5. Trigger background scans for unknown tokens (non-blocking)
     if to_scan:
         import asyncio
@@ -1196,7 +1199,7 @@ async def api_scan_batch(request: Request):
         task.add_done_callback(_background_scan_tasks.discard)
         logger.info(
             f"[DASHBOARD] req={request_id} queued {len(to_scan)} "
-            "batch scans in background"
+            f"batch scans in background (charged_units={usage_units})"
         )
     
     # 6. Return response
@@ -1205,6 +1208,7 @@ async def api_scan_batch(request: Request):
         "total": len(mints),
         "cached": len(mints) - len(to_scan),
         "queued": len(to_scan),
+        "charged_units": usage_units,
         "message": f"{len(to_scan)} tokens queued for scanning. Check back in 30-60 seconds for results." if to_scan else "All tokens found in cache."
     })
     
@@ -1586,6 +1590,7 @@ async def export_pdf(request: Request):
                 verdict = (token.get("ai_verdict") or "No verdict")[:60]
                 if len(token.get("ai_verdict") or "") > 60:
                     verdict += "..."
+                verdict = escape(str(verdict))
                 
                 table_data.append([token_display, mint_short, score, risk, verdict])
             

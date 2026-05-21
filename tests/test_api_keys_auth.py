@@ -4,7 +4,7 @@ Tests for API key generation access control.
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scamhound"))
 
@@ -157,3 +157,44 @@ def test_key_generation_endpoint_is_rate_limited(fastapi_test_client):
     assert first.status_code == 200
     assert second.status_code == 200
     assert third.status_code == 429
+
+
+def test_batch_scan_charges_only_for_queued_work(fastapi_test_client):
+    """Batch scan usage units should scale with uncached mints."""
+    key_row = {
+        "id": 99,
+        "tier": "builder",
+        "calls_today": 0,
+    }
+    mints = [
+        "11111111111111111111111111111111",
+        "11111111111111111111111111111112",
+        "11111111111111111111111111111113",
+    ]
+
+    with patch("dashboard.app._check_api_key", return_value=(key_row, None)):
+        with patch(
+            "engine.database.get_score_by_mint",
+            side_effect=[{"token_mint": mints[0]}, {"token_mint": mints[1]}, None],
+        ):
+            with patch(
+                "engine.database.increment_api_key_usage"
+            ) as increment_usage:
+                with patch(
+                    "dashboard.app.monitor.scan_single_token_async",
+                    new_callable=AsyncMock,
+                    return_value={"token_mint": mints[2]},
+                ):
+                    response = fastapi_test_client.post(
+                        "/api/scan/batch",
+                        json={"mints": mints},
+                    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["cached"] == 2
+    assert payload["queued"] == 1
+    assert payload["charged_units"] == 1
+    increment_usage.assert_called_once_with(
+        key_row["id"], "/api/scan/batch", count=1
+    )
